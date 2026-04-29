@@ -607,7 +607,7 @@ curl "$INGRESS_GW_ADDRESS:8084/llama" -H content-type:application/json -d '{
 
 This section covers collecting and viewing traces from an MCP Server and an LLM.
 
-### Agentic runtime to mcp server
+### 1. Agentic runtime to mcp server
 
 #### Gateway Creation
 
@@ -950,7 +950,7 @@ kubectl get referencegrant -n telemetry
 kubectl describe agentgatewaypolicy mcp-tracing -n agentgateway-system
 ```
 
-### Agentic runtime to LLM
+### 2. Agentic runtime to LLM
 
 You can use the same OTel configuration from the MCP section. The key difference is you will need another `EnterpriseAgentgatewayPolicy` that is referencing the LLM Gateway instead of the MCP Gateway. If you have one Gateway that does both, you'll just need to add the `attributes` for the LLM `EnterpriseAgentgatewayPolicy` to the previous `EnterpriseAgentgatewayPolicy` created for MCP.
 
@@ -996,7 +996,6 @@ EOF
 2. Audit Logging
 3. AuthN/Z
 4. Prompt guards
-5. OBO (entra)
 
 
 The examples below assume:
@@ -1317,15 +1316,215 @@ kubectl logs -n agentgateway-system deploy/enterprise-agentgateway --tail=200 | 
 ## Agents
 1. 1-2 business Agents
 
+**need to clarify what framework/runtime is being used (e.g - CrewAI, Langchain, etc.) to build these out**
+
 ---
 
 ## MCP Server & Security
 
-1. User identity
-2. Control of MCP Server tools (which can be used, which can't be used, and which need auth)
-3. Respect existing OIDC / AD controls
-4. Need-to-know access / no leakage
+### 1. MCP Auth
+
+1. Get your MCP Gateway
+```
+kubectl get gateway -n agentgateway-system mcp-gateway
+```
+
+2. Open MCP Inspector in a new terminal
+```
+npx modelcontextprotocol/inspector#0.18.0
+```
+
+3. Specify, within the **URL** section, the following:
+```
+http://YOUR_ALB_IP:3000/mcp
+```
+
+You should now be able to see the connection without any security. This means that the MCP Server is wide open.
+
+4. To implement auth security, add a gateway policy
+```
+kubectl apply -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: jwt
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: mcp-gateway
+  traffic:
+    jwtAuthentication:
+      providers:
+        - issuer: solo.io
+          jwks:
+            inline: '{"keys": [{"kty": "RSA", "kid": "solo-public-key-001", "use": "sig", "alg": "RS256", "n": "vdV2XxH70WcgDKedYXNQ3Dy1LN8LKziw3pxBe0M-QG3_urCbN-oTPL2e0xrj5t2JOV-eBNaII17oZ6z9q84lLzn4mgU_UzP-Efv6iTZLlC_SD30AknifnoX8k38zbJtuwkvVcZvkam0LM5oIwSf4wJVpdPKHb3o_gGRpCBxWdQHPdBWMBPwOeqFfONFrM0bEnShFWf3d87EgckdVcrypelLyUZJ_ACdEGYUhS6FHmyojA1g6zKryAAWsH5Y-UCUuJd7VlOCMoBpAKK0BSdlF3WVSYHDlyMSB5H61eYCXSpfKcGhoHxViLgq6yjUR7TOHkJ-OtWna513TrkRw2Y0hsQ", "e": "AQAB"}]}'
+EOF
+```
+
+5. Open the MCP Inspector and under **Authentication**, add in the following:
+- Header Name: **Authorization**
+- Bearer Token:
+```
+eyJhbGciOiJSUzI1NiIsImtpZCI6InNvbG8tcHVibGljLWtleS0wMDEiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJzb2xvLmlvIiwib3JnIjoic29sby5pbyIsInN1YiI6ImJvYiIsInRlYW0iOiJvcHMiLCJleHAiOjIwNzQyNzQ5NTQsImxsbXMiOnsibWlzdHJhbGFpIjpbIm1pc3RyYWwtbGFyZ2UtbGF0ZXN0Il19fQ.AZF6QKJJbnayVvP4bWVr7geYp6sdfSP-OZVyWAA4RuyjHMELE-K-z1lzddLt03i-kG7A3RrCuuF80NeYnI_Cm6pWtwJoFGbLfGoE0WXsBi50-0wLnpjAb2DVIez55njP9NVv3kHbVu1J8_ZO6ttuW6QOZU7AKWE1-vymcDVsNkpFyPBFXV7b-RIHFZpHqgp7udhD6BRBjshhrzA4752qovb-M-GRDrVO9tJhDXEmhStKkV1WLMJkH43xPSf1uNR1M10gMMzjFZgVB-kg6a1MRzElccpRum729c5rRGzd-_C4DsGm4oqBjg-bqXNNtUwNCIlmfRI5yeAsbeayVcnTIg
+```
+
+6. Clean up the policy
+```
+kubectl delete -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: jwt
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: mcp-gateway
+  traffic:
+    jwtAuthentication:
+      providers:
+        - issuer: solo.io
+          jwks:
+            inline: '{"keys": [{"kty": "RSA", "kid": "solo-public-key-001", "use": "sig", "alg": "RS256", "n": "vdV2XxH70WcgDKedYXNQ3Dy1LN8LKziw3pxBe0M-QG3_urCbN-oTPL2e0xrj5t2JOV-eBNaII17oZ6z9q84lLzn4mgU_UzP-Efv6iTZLlC_SD30AknifnoX8k38zbJtuwkvVcZvkam0LM5oIwSf4wJVpdPKHb3o_gGRpCBxWdQHPdBWMBPwOeqFfONFrM0bEnShFWf3d87EgckdVcrypelLyUZJ_ACdEGYUhS6FHmyojA1g6zKryAAWsH5Y-UCUuJd7VlOCMoBpAKK0BSdlF3WVSYHDlyMSB5H61eYCXSpfKcGhoHxViLgq6yjUR7TOHkJ-OtWna513TrkRw2Y0hsQ", "e": "AQAB"}]}'
+EOF
+```
+
+### 2. MCP Traffic Policy (no tools)
+
+1. Add the traffic policy
+```
+kubectl apply -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: tool-select
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: github-mcp-server
+  backend:
+    mcp:
+      authorization:
+        policy:
+          matchExpressions:
+            - 'mcp.tool.name == ""'
+EOF
+```
+
+### 3. MCP Traffic Policy (add tool)
+
+1. Add the traffic policy
+```
+kubectl apply -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: tool-select
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: github-mcp-server
+  backend:
+    mcp:
+      authorization:
+        policy:
+          matchExpressions:
+            - 'mcp.tool.name == "get_me"'
+EOF
+```
+
+2. Cleanup
+
+```
+kubectl delete -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: tool-select
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: github-mcp-server
+  backend:
+    mcp:
+      authorization:
+        policy:
+          matchExpressions:
+            - 'mcp.tool.name == "get_me"'
+EOF
+```
+
+### 4. Agentgateway Traffic Policy
+
+1. Create a rate limit rule that targets the `HTTPRoute` you just created
+```
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: traffic-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: mcp-route
+  traffic:
+    rateLimit:
+      local:
+        - requests: 1
+          unit: Minutes
+EOF
+```
+
+
+2. Capture the LB IP of the service to test again
+```
+export GATEWAY_IP=$(kubectl get svc mcp-gateway -n agentgateway-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo $GATEWAY_IP
+```
+
+3. Test the LLM connectivity
+```
+curl -v "http://$GATEWAY_IP:3000/anthropic" \
+  -H "content-type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "system": "credit card person.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is a credit card"
+      }
+    ]
+  }' | jq
+```
+
+10. Run the `curl` again
+
+You'll see a `curl` error that looks something like this:
+
+```
+< x-ratelimit-limit: 1
+< x-ratelimit-remaining: 0
+< x-ratelimit-reset: 76
+< content-length: 19
+< date: Tue, 18 Nov 2025 15:35:45 GMT
+```
+
+And if you check the agentgateway Pod logs, you'll see the rate limit error.
 
 ---
 
 ## Performance/Benchmarks
+
+https://github.com/howardjohn/gateway-api-bench/blob/main/README-v2.md
