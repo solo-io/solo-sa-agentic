@@ -1358,13 +1358,6 @@ kubectl logs -n agentgateway-system deploy/enterprise-agentgateway --tail=200 | 
 
 ---
 
-## Agents
-1. 1-2 business Agents
-
-**need to clarify what framework/runtime is being used (e.g - CrewAI, Langchain, etc.) to build these out**
-
----
-
 ## MCP Server & Security
 
 ### 1. MCP Auth
