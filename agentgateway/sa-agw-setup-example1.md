@@ -541,7 +541,110 @@ transfer-encoding: chunked
 {"choices":[{"finish_reason":"length","index":0,"logprobs":null,"prompt_logprobs":null,"prompt_token_ids":null,"stop_reason":null,"text":" The warmest city in the United States, according to historical data and weather records, is Phoenix, Arizona. However, it's important to note that temperature can vary significantly from year to year due to factors such as El Niño events or La Niña conditions.\n\nPhoenix has a desert climate with hot summers and mild winters. Its average high temperatures range from around 104°F (40°C) during July and August to about 78°F (26°C) in January.","token_ids":null}],"created":1777646843,"id":"cmpl-b505cf4d-4523-40b4-a0fc-ae9ac49d4fa6","kv_transfer_params":null,"model":"Qwen/Qwen2.5-1.5B-Instruct","object":"text_completion","service_tier":null,"system_fingerprint":null,"usage":{"completion_tokens":100,"prompt_tokens":10,"prompt_tokens_details":null,"total_tokens":110}}% 
 ```
 
+---
+
 ### Failover Models
+
+1. Deploy the `Deployment` object which uses a vLLM container image specifically for testing against CPU instead of GPU.
+```
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-gpt-oss-20b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-gpt-oss-20b
+  template:
+    metadata:
+      labels:
+        app: vllm-gpt-oss-20b
+    spec:
+      containers:
+        - name: vllm
+          image: "vllm/vllm-openai:v0.18.0"
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+          args:
+          - "--model"
+          - "openai/gpt-oss-20b"
+          - "--port"
+          - "8000"
+          env:
+            - name: PORT
+              value: "8000"
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 240
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 180
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            failureThreshold: 600
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 180
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+             limits:
+               cpu: "11"
+               memory: "24Gi"
+               nvidia.com/gpu: "1"
+             requests:
+               cpu: "11"
+               memory: "24Gi"
+               nvidia.com/gpu: "1"
+          volumeMounts:
+            - mountPath: /data
+              name: data
+            - mountPath: /dev/shm
+              name: shm
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: shm
+          emptyDir:
+            medium: Memory
+EOF
+```
+
+```
+kubectl apply -f- <<EOF
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: model-failover
+  namespace: agentgateway-system
+spec:
+  ai:
+    groups: 
+      - providers: 
+          - name: Qwen/Qwen2.5-1.5B-Instruct
+            openai: 
+              model: Qwen/Qwen2.5-1.5B-Instruct
+      - providers: 
+          - name: openai/gpt-oss-20b
+            openai: 
+              model: openai/gpt-oss-20b
+EOF
+```
 
 ---
 
