@@ -358,248 +358,190 @@ EOF
 
 ---
 
-## Agentgateway Direct To On-Prem
+## Agentgateway: LLM On-Prem
 
-Please note: this section is for an example of how to route traffic through an on-prem/open model. The idea of routing traffic through an on-prem/open model isn't tied to Ollama only.
+Please note: this section is for an example of how to route traffic through an on-prem/open model. The idea of routing traffic through an on-prem/open model isn't tied to Qwen or GPT only.
 
-This section routes agentgateway to a self-hosted Llama model running on-cluster via Ollama. Because Ollama exposes an OpenAI-compatible API, agentgateway uses the `openai` provider block with a custom `host` pointing to the in-cluster Ollama service.
+This section routes agentgateway to a self-hosted model running on-cluster. Because Ollama exposes an OpenAI-compatible API, agentgateway uses the `openai` provider block with a custom `host` pointing to the in-cluster Ollama service.
 
-### Deploy Ollama with Llama3
-
-1. Create the `ollama` namespace
-
+### Deploy Local LLM
+1. Deploy the `Deployment` object which uses a vLLM container image specifically for testing against CPU instead of GPU.
 ```
-kubectl create ns ollama
-```
-
-2. Deploy Ollama with an init container that pulls the Llama3 model. This step can take several minutes depending on node size and network speed.
-
-```
-kubectl apply -f- <<EOF
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ollama
-  namespace: ollama
+  name: vllm-qwen25-15b-instruct
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      name: ollama
+      app: vllm-qwen25-15b-instruct
   template:
     metadata:
       labels:
-        name: ollama
+        app: vllm-qwen25-15b-instruct
     spec:
-      initContainers:
-      - name: model-puller
-        image: ollama/ollama:0.6.2
-        command: ["/bin/sh", "-c"]
-        args:
-          - |
-            ollama serve &
-            sleep 10
-            ollama pull llama3
-            pkill ollama
-        volumeMounts:
-        - name: ollama-data
-          mountPath: /root/.ollama
-        resources:
-          requests:
-            memory: "8Gi"
-          limits:
-            memory: "12Gi"
       containers:
-      - name: ollama
-        image: ollama/ollama:0.6.2
-        ports:
-        - name: http
-          containerPort: 11434
-          protocol: TCP
-        volumeMounts:
-        - name: ollama-data
-          mountPath: /root/.ollama
-        resources:
-          requests:
-            memory: "8Gi"
-          limits:
-            memory: "12Gi"
+        - name: vllm
+          image: "vllm/vllm-openai-cpu:v0.18.0" # official vLLM CPU image from Docker Hub; pin a concrete tag to avoid drift from latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+          args:
+          - "--model"
+          - "Qwen/Qwen2.5-1.5B-Instruct"
+          - "--port"
+          - "8000"
+          env:
+            - name: PORT
+              value: "8000"
+            - name: VLLM_CPU_KVCACHE_SPACE
+              value: "4"
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 240
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 180
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            failureThreshold: 600
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 180
+            periodSeconds: 5
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+             limits:
+               cpu: "11"
+               memory: "10Gi"
+             requests:
+               cpu: "11"
+               memory: "10Gi"
+          volumeMounts:
+            - mountPath: /data
+              name: data
+            - mountPath: /dev/shm
+              name: shm
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      terminationGracePeriodSeconds: 30
       volumes:
-      - name: ollama-data
-        emptyDir: {}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ollama
-  namespace: ollama
-spec:
-  type: ClusterIP
-  selector:
-    name: ollama
-  ports:
-  - port: 80
-    name: http
-    targetPort: http
-    protocol: TCP
+        - name: data
+          emptyDir: {}
+        - name: shm
+          emptyDir:
+            medium: Memory
 EOF
 ```
 
-3. Wait for the Ollama pod to be ready (the init container needs to finish downloading Llama3)
-
+You'll need to give it about 2-3 minutes for the Model to download and then you can confirm the Pod is running with the following command:
 ```
-kubectl rollout status deployment/ollama -n ollama --timeout=600s
-```
-
-4. Confirm the model was downloaded
-
-```
-kubectl exec -n ollama deployment/ollama -- ollama list
+kubectl get pods
 ```
 
-You should see output similar to:
+2. Install the CRDs for Inference
 ```
-NAME             ID              SIZE      MODIFIED
-llama3:latest    365c0bd3c000    4.7 GB    About a minute ago
-```
-
-### Route Agentgateway to Ollama
-
-5. Set a placeholder API key. The OpenAI-compatible API spec requires a secret even though Ollama does not use one.
-
-```
-export OLLAMA_PLACEHOLDER_KEY="placeholder"
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v1.4.0/manifests.yaml
 ```
 
-6. Create a Gateway for the on-prem Llama route
+3. Update your agw installation with the inference extension
+```
+helm upgrade -i --reuse-values agentgateway oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway \
+--namespace agentgateway-system \
+--set inferenceExtension.enabled=true \
+--version v2026.5.0-beta.3 \
+--set-string licensing.licenseKey=${AGENTGATEWAY_LICENSE_KEY}
+```
+
+4. Deploy the below Helm chart which does the following:
+- Installs an `InferencePool` resource/object that acts as a logical grouping of AI model servers for load balancing and routing inference requests
+- Installs the Endpoint-picker extension (epp/llm-d), which is an intelligent selection among available model servers for load balancing
 
 ```
-kubectl apply -f- <<EOF
-kind: Gateway
+export IGW_CHART_VERSION=v1.1.0
+export GATEWAY_PROVIDER=none
+
+helm install vllm-qwen25-15b-instruct \
+--set inferencePool.modelServers.matchLabels.app=vllm-qwen25-15b-instruct \
+--set provider.name=$GATEWAY_PROVIDER \
+--version $IGW_CHART_VERSION \
+oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool
+```
+
+5. Deploy a `Gateway` and `HTTPRoute` object for Inference. This will route to the `InferencePool` that was created in the previous step via the Helm Chart. This piece (`inferencePool.modelServers.matchLabels.app) matches any app running the `vllm-qwen25-15b-instruct` label, which was deployed in step 1 (the `Deployment` object)
+```
+kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
 metadata:
-  name: agentgateway-llama-route
-  namespace: agentgateway-system
-  labels:
-    app: agentgateway-llama-route
+  name: inference-gateway
 spec:
   gatewayClassName: enterprise-agentgateway
   listeners:
-  - protocol: HTTP
-    port: 8084
-    name: http
-    allowedRoutes:
-      namespaces:
-        from: All
-EOF
-```
-
-7. Capture the LB IP of the service
-
-```
-export INGRESS_GW_ADDRESS=$(kubectl get svc -n agentgateway-system agentgateway-llama-route -o jsonpath="{.status.loadBalancer.ingress[0]['hostname','ip']}")
-echo $INGRESS_GW_ADDRESS
-```
-
-8. Create a placeholder secret (required by the OpenAI provider spec)
-
-```
-kubectl apply -f- <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ollama-secret
-  namespace: agentgateway-system
-  labels:
-    app: agentgateway-llama-route
-type: Opaque
-stringData:
-  Authorization: $OLLAMA_PLACEHOLDER_KEY
-EOF
-```
-
-9. Create the `AgentgatewayBackend` pointing to the in-cluster Ollama service. The `openai` provider block is used because Ollama exposes an OpenAI-compatible API.
-
-```
-kubectl apply -f- <<EOF
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
-metadata:
-  labels:
-    app: agentgateway-llama-route
-  name: llama-backend
-  namespace: agentgateway-system
-spec:
-  ai:
-    groups:
-    - providers:
-      - name: ollama-llama3
-        host: ollama.ollama.svc.cluster.local
-        port: 80
-        openai:
-          model: "llama3:latest"
-        policies:
-          auth:
-            secretRef:
-              name: ollama-secret
-EOF
-```
-
-10. Verify the backend was created
-
-```
-kubectl get agentgatewaybackend -n agentgateway-system
-```
-
-11. Create the HTTPRoute to expose the Llama endpoint
-
-```
-kubectl apply -f- <<EOF
+  - name: http
+    port: 80
+    protocol: HTTP
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: llama
-  namespace: agentgateway-system
-  labels:
-    app: agentgateway-llama-route
+  name: llm-route
 spec:
   parentRefs:
-    - name: agentgateway-llama-route
-      namespace: agentgateway-system
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: inference-gateway
   rules:
-  - matches:
+  - backendRefs:
+    - group: inference.networking.k8s.io
+      kind: InferencePool
+      name: vllm-qwen25-15b-instruct
+    matches:
     - path:
         type: PathPrefix
-        value: /llama
-    filters:
-    - type: URLRewrite
-      urlRewrite:
-        path:
-          type: ReplaceFullPath
-          replaceFullPath: /v1/chat/completions
-    backendRefs:
-    - name: llama-backend
-      namespace: agentgateway-system
-      group: agentgateway.dev
-      kind: AgentgatewayBackend
+        value: /
+    timeouts:
+      request: 300s
 EOF
 ```
 
-12. Test connectivity to Llama through agentgateway.
+6. Test and confirm
+```
+IP=$(kubectl get gateway/inference-gateway -o jsonpath='{.status.addresses[0].value}')
+PORT=80
 
+curl -i ${IP}:${PORT}/v1/completions -H 'Content-Type: application/json' -d '{
+"model": "Qwen/Qwen2.5-1.5B-Instruct",
+"prompt": "What is the warmest city in the USA?",
+"max_tokens": 100,
+"temperature": 0.5
+}'
 ```
-curl "$INGRESS_GW_ADDRESS:8084/llama" -H content-type:application/json -d '{
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a skilled cloud-native network engineer."
-    },
-    {
-      "role": "user",
-      "content": "What is Istio Ambient Mesh?"
-    }
-  ]
-}' | jq
+
+You should see an output similar to the below:
 ```
+HTTP/1.1 200 OK
+date: Fri, 01 May 2026 14:47:23 GMT
+server: uvicorn
+content-type: application/json
+x-went-into-resp-headers: true
+transfer-encoding: chunked
+
+{"choices":[{"finish_reason":"length","index":0,"logprobs":null,"prompt_logprobs":null,"prompt_token_ids":null,"stop_reason":null,"text":" The warmest city in the United States, according to historical data and weather records, is Phoenix, Arizona. However, it's important to note that temperature can vary significantly from year to year due to factors such as El Niño events or La Niña conditions.\n\nPhoenix has a desert climate with hot summers and mild winters. Its average high temperatures range from around 104°F (40°C) during July and August to about 78°F (26°C) in January.","token_ids":null}],"created":1777646843,"id":"cmpl-b505cf4d-4523-40b4-a0fc-ae9ac49d4fa6","kv_transfer_params":null,"model":"Qwen/Qwen2.5-1.5B-Instruct","object":"text_completion","service_tier":null,"system_fingerprint":null,"usage":{"completion_tokens":100,"prompt_tokens":10,"prompt_tokens_details":null,"total_tokens":110}}% 
+```
+
+### Failover Models
 
 ---
 
