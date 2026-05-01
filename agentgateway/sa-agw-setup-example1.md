@@ -1,3 +1,32 @@
+# Agentgateway Use Cases
+
+## Use Cases Covered
+
+- [Copilot w/ Agentgateway](#copilot-w-agentgateway)
+  - [VS Code proxy configuration](#in-vs-code)
+  - [Copilot CLI proxy configuration](#copilot-cli)
+- [Microsoft Foundry w/ Agentgateway](#microsoft-foundry-w-agentgateway)
+- [Agentgateway Direct To Anthropic](#agentgateway-direct-to-anthropic)
+- [Switching Model Providers](#switching-model-providers)
+- [Agentgateway: LLM On-Prem](#agentgateway-llm-on-prem)
+  - [Deploy Local LLM](#deploy-local-llm)
+  - [Failover Models](#failover-models)
+- [Traces](#traces)
+  - [Agentic runtime to MCP server](#1-agentic-runtime-to-mcp-server)
+  - [Agentic runtime to LLM](#2-agentic-runtime-to-llm)
+- [Agentic Security](#agentic-security)
+  - [Rate Limiting](#1-rate-limiting)
+  - [Audit Logging](#2-audit-logging)
+  - [Prompt Guards](#3-prompt-guards)
+- [MCP Server & Security](#mcp-server--security)
+  - [MCP Auth](#1-mcp-auth)
+  - [MCP Traffic Policy: no tools](#2-mcp-traffic-policy-no-tools)
+  - [MCP Traffic Policy: add tool](#3-mcp-traffic-policy-add-tool)
+  - [Agentgateway Traffic Policy](#4-agentgateway-traffic-policy)
+- [Performance/Benchmarks](#performancebenchmarks)
+
+---
+
 ## Copilot w/ Agentgateway
 
 Per GitHub docs: 
