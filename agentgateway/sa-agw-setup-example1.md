@@ -2,6 +2,7 @@
 
 ## Use Cases Covered
 
+- [OSS and Enterprise Local Bootstrap](#oss-and-enterprise-local-bootstrap)
 - [Copilot w/ Agentgateway](#copilot-w-agentgateway)
   - [VS Code proxy configuration](#in-vs-code)
   - [Copilot CLI proxy configuration](#copilot-cli)
@@ -24,6 +25,20 @@
   - [MCP Traffic Policy: add tool](#3-mcp-traffic-policy-add-tool)
   - [Agentgateway Traffic Policy](#4-agentgateway-traffic-policy)
 - [Performance/Benchmarks](#performancebenchmarks)
+
+---
+
+## OSS and Enterprise Local Bootstrap
+
+For a local kind cluster that installs OSS agentgateway and Solo Enterprise for
+agentgateway side by side with a mock OpenAI-compatible LLM, see
+[oss-ent/README.md](oss-ent/README.md).
+
+From the repository root:
+
+```bash
+AGENTGATEWAY_LICENSE_KEY='<license-key>' make -C agentgateway/oss-ent install
+```
 
 ---
 

@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  labels:
+    app.kubernetes.io/name: mock-llm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock-llm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mock-llm
+    spec:
+      containers:
+      - name: mock-llm
+        image: python:3.12-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        command:
+        - python
+        - -c
+        args:
+        - |
+          import json
+          import time
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          class Handler(BaseHTTPRequestHandler):
+              def log_message(self, fmt, *args):
+                  print("%s - %s" % (self.address_string(), fmt % args), flush=True)
+
+              def _json(self, status, payload):
+                  body = json.dumps(payload).encode("utf-8")
+                  self.send_response(status)
+                  self.send_header("content-type", "application/json")
+                  self.send_header("content-length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_GET(self):
+                  if self.path in ("/healthz", "/readyz"):
+                      self._json(200, {"status": "ok"})
+                  elif self.path == "/v1/models":
+                      self._json(200, {
+                          "object": "list",
+                          "data": [{"id": "mock-gpt", "object": "model", "owned_by": "mock-llm"}],
+                      })
+                  else:
+                      self._json(404, {"error": {"message": "not found"}})
+
+              def do_POST(self):
+                  length = int(self.headers.get("content-length", "0"))
+                  raw = self.rfile.read(length) if length else b"{}"
+                  try:
+                      request = json.loads(raw.decode("utf-8"))
+                  except Exception:
+                      request = {}
+
+                  if self.path not in ("/v1/chat/completions", "/llm/chat/completions"):
+                      self._json(404, {"error": {"message": "unsupported path", "path": self.path}})
+                      return
+
+                  messages = request.get("messages") or []
+                  prompt = ""
+                  if messages and isinstance(messages[-1], dict):
+                      prompt = str(messages[-1].get("content", ""))
+
+                  self._json(200, {
+                      "id": "chatcmpl-mock",
+                      "object": "chat.completion",
+                      "created": int(time.time()),
+                      "model": request.get("model", "mock-gpt"),
+                      "choices": [{
+                          "index": 0,
+                          "message": {
+                              "role": "assistant",
+                              "content": "mock llm response via agentgateway: " + prompt,
+                          },
+                          "finish_reason": "stop",
+                      }],
+                      "usage": {
+                          "prompt_tokens": 1,
+                          "completion_tokens": 1,
+                          "total_tokens": 2,
+                      },
+                  })
+
+          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi

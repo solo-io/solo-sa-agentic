@@ -1,0 +1,14 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mock-llm-oss
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4o-mini
+      host: mock-llm
+      port: 80
+  policies:
+    auth:
+      passthrough: {}
