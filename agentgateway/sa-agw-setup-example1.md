@@ -334,74 +334,6 @@ curl "$INGRESS_GW_ADDRESS:8082/anthropic" -H content-type:application/json -H "a
 
 ---
 
-## Switching Model Providers
-
-Docs: https://docs.solo.io/agentgateway/2.3.x/llm/failover/
-
-The key in the example below is the `providers` parmater. You can think of them like "first, second, third, etc.". If `gpt-4.1` fails (provider block 1), it'll fail over the `gpt-5.1` (provider block 2)
-
-```
-kubectl apply -f- <<EOF
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
-metadata:
-  name: model-failover
-  namespace: agentgateway-system
-spec:
-  ai:
-    groups:
-      - providers:
-          - name: openai-gpt-41
-            openai:
-              model: gpt-4.1
-            policies:
-              auth:
-                secretRef:
-                  name: openai-secret
-      - providers:
-          - name: openai-gpt-51
-            openai:
-              model: gpt-5.1
-            policies:
-              auth:
-                secretRef:
-                  name: openai-secret
-      - providers:
-          - name: openai-gpt-3-5-turbo
-            openai:
-              model: gpt-3.5-turbo
-            policies:
-              auth:
-                secretRef:
-                  name: openai-secret
-EOF
-```
-
-The way that the actual failover occurs based on things like failures and performance is with an `EnterpriseAgentgatewayPolic`. In this example, its based off of failures or rate limit responses.
-
-```
-kubectl apply -f- <<EOF
-apiVersion: enterpriseagentgateway.solo.io/v1alpha1
-kind: EnterpriseAgentgatewayPolicy
-metadata:
-  name: model-failover-health
-  namespace: agentgateway-system
-spec:
-  targetRefs:
-  - group: agentgateway.dev
-    kind: AgentgatewayBackend
-    name: model-failover
-  backend:
-    health:
-      unhealthyCondition: "response.code >= 500 || response.code == 429"
-      eviction:
-        duration: 10s
-        consecutiveFailures: 1
-EOF
-```
-
----
-
 ## Agentgateway: LLM On-Prem
 
 Please note: this section is for an example of how to route traffic through an on-prem/open model. The idea of routing traffic through an on-prem/open model isn't tied to Qwen or GPT only.
@@ -486,6 +418,19 @@ spec:
         - name: shm
           emptyDir:
             medium: Memory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-qwen25-15b-instruct
+spec:
+  selector:
+    app: vllm-qwen25-15b-instruct
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP
 EOF
 ```
 
@@ -536,6 +481,9 @@ spec:
   - name: http
     port: 80
     protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: All
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -589,7 +537,7 @@ transfer-encoding: chunked
 
 ### Failover Models
 
-1. Deploy the `Deployment` object which uses a vLLM container image specifically for testing against CPU instead of GPU.
+1. Deploy the `Deployment` object which uses a vLLM container for GPT OSS.
 ```
 kubectl apply -f - <<EOF
 apiVersion: apps/v1
@@ -666,9 +614,35 @@ spec:
         - name: shm
           emptyDir:
             medium: Memory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-gpt-oss-20b
+spec:
+  selector:
+    app: vllm-gpt-oss-20b
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP
 EOF
 ```
 
+2. Deploy the below Helm chart which does the following:
+- Installs an `InferencePool` resource/object that acts as a logical grouping of AI model servers for load balancing and routing inference requests
+- Installs the Endpoint-picker extension (epp/llm-d), which is an intelligent selection among available model servers for load balancing
+
+```
+helm install vllm-gpt-oss-20b \
+  --set inferencePool.modelServers.matchLabels.app=vllm-gpt-oss-20b \
+  --set provider.name=none \
+  --version $IGW_CHART_VERSION \
+  oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool
+```
+
+3. Create a backend that has two provider blocks for failover between Qwen and GPT OSS.
 ```
 kubectl apply -f- <<EOF
 apiVersion: agentgateway.dev/v1alpha1
@@ -678,15 +652,184 @@ metadata:
   namespace: agentgateway-system
 spec:
   ai:
-    groups: 
-      - providers: 
-          - name: Qwen/Qwen2.5-1.5B-Instruct
-            openai: 
+    groups:
+      - providers:
+          - name: qwen25-15b-instruct
+            host: vllm-qwen25-15b-instruct.default.svc.cluster.local
+            port: 8000
+            openai:
               model: Qwen/Qwen2.5-1.5B-Instruct
-      - providers: 
-          - name: openai/gpt-oss-20b
-            openai: 
+      - providers:
+          - name: gpt-oss-20b
+            host: vllm-gpt-oss-20b.default.svc.cluster.local
+            port: 8000
+            openai:
               model: openai/gpt-oss-20b
+EOF
+```
+
+Test and confirm:
+```
+IP=$(kubectl get gateway inference-gateway -n default -o jsonpath='{.status.addresses[0].value}')
+
+curl -i "http://${IP}/model" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in one sentence."
+      }
+    ],
+    "max_tokens": 50,
+    "temperature": 0.2
+  }'
+```
+
+4. Create a dedicated route for the failover backend
+```
+kubectl apply -f- <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: model-failover
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: inference-gateway
+      namespace: default
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /model
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplaceFullPath
+          replaceFullPath: /v1/chat/completions
+    backendRefs:
+    - name: model-failover
+      namespace: agentgateway-system
+      group: agentgateway.dev
+      kind: AgentgatewayBackend
+EOF
+```
+
+5. Add a health policy:
+```
+kubectl apply -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: model-failover-health
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: model-failover
+  backend:
+    health:
+      unhealthyCondition: "response.code >= 500 || response.code == 429"
+      eviction:
+        duration: 10s
+        consecutiveFailures: 1
+EOF
+```
+
+### Failover Test
+
+To test failover, temporarily make the health policy treat every response as unhealthy. That forces Agent Gateway to evict the current provider after a response, so the next request should move to the next priority group.
+
+1. Apply this temporary policy:
+
+```
+kubectl apply -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: model-failover-health
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: model-failover
+  backend:
+    health:
+      unhealthyCondition: "true"
+      eviction:
+        duration: 30s
+        consecutiveFailures: 1
+EOF
+```
+
+2. Then send a few requests:
+
+```
+IP=$(kubectl get gateway inference-gateway -n default -o jsonpath='{.status.addresses[0].value}')
+
+for i in 1 2 3; do
+  echo "=== Request $i ==="
+  curl -s "http://${IP}/model" \
+    -H 'Content-Type: application/json' \
+    -d '{
+      "messages": [
+        {
+          "role": "user",
+          "content": "Say hello in one word."
+        }
+      ],
+      "max_tokens": 20,
+      "temperature": 0.2
+    }' | jq '{model, answer: .choices[0].message.content}'
+  echo
+done
+```
+
+You'll see the failover occur:
+```
+=== Request 1 ===
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "answer": "Hello."
+}
+
+=== Request 2 ===
+{
+  "model": "openai/gpt-oss-20b",
+  "answer": null
+}
+
+=== Request 3 ===
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "answer": "Hello."
+}
+```
+
+3. Re-apply the healthy policy
+
+```
+kubectl apply -f- <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: model-failover-health
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: model-failover
+  backend:
+    health:
+      unhealthyCondition: "response.code >= 500 || response.code == 429"
+      eviction:
+        duration: 10s
+        consecutiveFailures: 1
 EOF
 ```
 
@@ -1604,6 +1747,12 @@ You'll see a `curl` error that looks something like this:
 ```
 
 And if you check the agentgateway Pod logs, you'll see the rate limit error.
+
+---
+
+## OBO
+
+WIP
 
 ---
 
