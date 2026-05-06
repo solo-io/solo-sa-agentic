@@ -1,5 +1,0 @@
-export AGENTGATEWAY_LICENSE_KEY='eyJleHAiOjE5MzUzMTU4MjYsImlhdCI6MTc3NzYzNTgyNiwiayI6InpGSjhSZyIsImx0IjoiZW50IiwibmJmIjoxNzc3NjM1ODI2LCJwcm9kdWN0IjoiYWdlbnRnYXRld2F5In0.KMFDcqNgFM2njNyVBzKzPNJ0WHNALEt-ag_-jUnKzjs'
- make install
-
-
- helm upgrade -i enterprise-agentgateway-crds oci://us-docker.pkg.dev/solo-public/enterprise-agentgateway/charts/enterprise-agentgateway-crds --create-namespace --namespace agentgateway-system --version v2.3.0
