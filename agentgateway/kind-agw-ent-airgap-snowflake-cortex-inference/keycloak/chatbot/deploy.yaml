@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot
+  namespace: agentgateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chatbot
+  template:
+    metadata:
+      labels:
+        app: chatbot
+    spec:
+      containers:
+        - name: chatbot
+          image: chatbot:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8501
+          env:
+            - name: AGW_URL
+              value: "http://snowflake-cortex-gw.agentgateway-system.svc:8080"
+            - name: KEYCLOAK_BASE
+              value: "http://keycloak.agentgateway-system.svc:8080"
+            - name: KEYCLOAK_REALM
+              value: "agentgateway"
+            - name: CLIENT_ID
+              value: "chatbot-ui"
+            - name: MODEL
+              value: "snowflake-arctic"
+            - name: REDIRECT_URI
+              value: "http://172.18.0.25:8501/"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chatbot
+  namespace: agentgateway-system
+spec:
+  type: LoadBalancer
+  selector:
+    app: chatbot
+  ports:
+    - port: 8501
+      targetPort: 8501

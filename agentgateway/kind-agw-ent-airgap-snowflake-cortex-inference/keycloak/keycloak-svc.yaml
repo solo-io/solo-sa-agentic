@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: agentgateway-system
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: keycloak
+  namespace: agentgateway-system
+subsets:
+  - addresses:
+      - ip: 172.18.0.2
+    ports:
+      - port: 8080
+        protocol: TCP

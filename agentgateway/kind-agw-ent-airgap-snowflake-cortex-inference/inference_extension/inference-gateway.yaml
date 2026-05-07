@@ -1,0 +1,34 @@
+# Gateway + HTTPRoute for inference routing
+# Routes all requests to the InferencePool backend
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: inference-gateway
+spec:
+  gatewayClassName: enterprise-agentgateway
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-route
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: inference-gateway
+  rules:
+  - backendRefs:
+    - group: inference.networking.k8s.io
+      kind: InferencePool
+      name: vllm-qwen25-15b-instruct
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+    timeouts:
+      request: 300s

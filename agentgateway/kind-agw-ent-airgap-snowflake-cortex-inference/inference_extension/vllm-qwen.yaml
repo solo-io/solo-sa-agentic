@@ -1,0 +1,68 @@
+# vLLM Qwen2.5 1.5B Instruct — CPU image for local testing
+# Requires: 11 CPU cores, 10Gi memory
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-qwen25-15b-instruct
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-qwen25-15b-instruct
+  template:
+    metadata:
+      labels:
+        app: vllm-qwen25-15b-instruct
+    spec:
+      containers:
+      - name: vllm
+        image: "vllm/vllm-openai-cpu:v0.18.0"
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+        args:
+        - "--model"
+        - "Qwen/Qwen2.5-1.5B-Instruct"
+        - "--port"
+        - "8000"
+        env:
+        - name: PORT
+          value: "8000"
+        - name: VLLM_CPU_KVCACHE_SPACE
+          value: "4"
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        livenessProbe:
+          failureThreshold: 240
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 180
+          periodSeconds: 5
+        readinessProbe:
+          failureThreshold: 600
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 180
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: "11"
+            memory: "10Gi"
+          requests:
+            cpu: "11"
+            memory: "10Gi"
+        volumeMounts:
+        - mountPath: /data
+          name: data
+        - mountPath: /dev/shm
+          name: shm
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: data
+        emptyDir: {}
+      - name: shm
+        emptyDir:
+          medium: Memory

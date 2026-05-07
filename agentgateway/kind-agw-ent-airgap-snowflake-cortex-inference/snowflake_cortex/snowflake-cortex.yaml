@@ -1,0 +1,74 @@
+# Snowflake Cortex LLM Backend via OpenAI-compatible provider
+#
+# Snowflake Cortex exposes an OpenAI-compatible chat completions API at:
+#   POST https://<account>.snowflakecomputing.com/api/v2/cortex/v1/chat/completions
+#
+# Auth: Bearer <Snowflake PAT or JWT>
+# Body: standard OpenAI format (model, messages, temperature, etc.)
+#
+# Replace SNOWFLAKE_PAT below with a real Programmatic Access Token.
+# Generate one at: Snowflake UI → Admin → Security → Programmatic Access Tokens
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: snowflake-cortex-api-key
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: "Bearer <SNOWFLAKE_PAT>"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: snowflake-cortex-backend
+  namespace: agentgateway-system
+spec:
+  ai:
+    groups:
+    - providers:
+      - name: snowflake-cortex
+        openai: {}
+        host: <ORG>-<ACCOUNT>.snowflakecomputing.com
+        port: 443
+        pathPrefix: /api/v2/cortex/v1
+        policies:
+          auth:
+            secretRef:
+              name: snowflake-cortex-api-key
+          tls: {}
+          transformation:
+            request:
+              add:
+              - name: X-Snowflake-Authorization-Token-Type
+                value: "'PROGRAMMATIC_ACCESS_TOKEN'"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: snowflake-cortex-gw
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: enterprise-agentgateway
+  listeners:
+  - name: http
+    port: 8080
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: snowflake-cortex-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: snowflake-cortex-gw
+    sectionName: http
+  rules:
+  - backendRefs:
+    - name: snowflake-cortex-backend
+      kind: AgentgatewayBackend
+      group: agentgateway.dev

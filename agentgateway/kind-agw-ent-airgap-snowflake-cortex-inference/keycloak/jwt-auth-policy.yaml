@@ -1,0 +1,25 @@
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: jwt-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: snowflake-cortex-gw
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: "http://keycloak.servebeer.com:8088/realms/agentgateway"
+          jwks:
+            remote:
+              jwksPath: "/realms/agentgateway/protocol/openid-connect/certs"
+              cacheDuration: "5m"
+              backendRef:
+                group: ""
+                kind: Service
+                name: keycloak
+                namespace: agentgateway-system
+                port: 8080
