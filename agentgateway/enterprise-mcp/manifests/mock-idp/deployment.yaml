@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enterprise-idp
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: enterprise-idp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: enterprise-idp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: enterprise-idp
+    spec:
+      containers:
+      - name: enterprise-idp
+        image: python:3.12-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        command:
+        - python
+        - -c
+        args:
+        - |
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          JWKS = {
+              "keys": [{
+                  "kty": "RSA",
+                  "kid": "enterprise-mcp-test-key",
+                  "use": "sig",
+                  "alg": "RS256",
+                  "n": "0MxKOIaTP-mbhZ8Hz3vO3UVSj4jJZ088jgnBiSYsFiF9Ve-4f4WIGIzOeGR9OdW_qFDBaawxxbGrh-B60dfznt_0QXH0troknUPAvXvyiuV8fxXm2HtHWNxAJylDDxrwZcwRGxx4m3ZIDuRA3jgoKKVo86yB6ZM7qJkYoaVtnzm-nDlbcleP7dzWkvGB9JCzP-qRjVenLvLoDv1abh4feAJtnKZskfvmQ877kI9Q3jw4erEv7z98InJ2MYa5sckjmRotY5WuevtF-G9ApnEaDc2y9QiUvY6vsZq6_IjrdW-YBWgj5n-Md1gG4y-xX0fQBIBaioRf83dk_lvPM4Ju4w",
+                  "e": "AQAB"
+              }]
+          }
+
+          class Handler(BaseHTTPRequestHandler):
+              def log_message(self, fmt, *args):
+                  print("%s - %s" % (self.address_string(), fmt % args), flush=True)
+
+              def _json(self, status, payload):
+                  body = json.dumps(payload).encode("utf-8")
+                  self.send_response(status)
+                  self.send_header("content-type", "application/json")
+                  self.send_header("content-length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_GET(self):
+                  if self.path in ("/healthz", "/readyz"):
+                      self._json(200, {"status": "ok"})
+                      return
+                  if self.path == "/realms/agents/protocol/openid-connect/certs":
+                      self._json(200, JWKS)
+                      return
+                  if self.path == "/realms/agents/.well-known/openid-configuration":
+                      issuer = "http://enterprise-idp.agentgateway-system.svc.cluster.local:8080/realms/agents"
+                      self._json(200, {
+                          "issuer": issuer,
+                          "jwks_uri": issuer + "/protocol/openid-connect/certs",
+                      })
+                      return
+                  self._json(404, {"error": "not found"})
+
+          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi

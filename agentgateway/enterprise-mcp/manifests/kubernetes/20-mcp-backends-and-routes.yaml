@@ -1,0 +1,148 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: internal-core-banking-mcp
+  namespace: agentgateway-system
+  labels:
+    example.io/tool-owner: core-platform
+    example.io/risk-level: high
+    example.io/tool-type: internal
+spec:
+  mcp:
+    targets:
+    - name: core-banking-readonly
+      static:
+        host: core-banking-mcp.agentgateway-system.svc.cluster.local
+        port: 8080
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: vendor-case-management-mcp
+  namespace: agentgateway-system
+  labels:
+    example.io/tool-owner: vendor-platform
+    example.io/risk-level: medium
+    example.io/tool-type: approved-vendor
+spec:
+  mcp:
+    targets:
+    - name: vendor-case-management
+      static:
+        host: vendor-case-management-mcp.agentgateway-system.svc.cluster.local
+        port: 8080
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: approved-llm
+  namespace: agentgateway-system
+  labels:
+    example.io/tool-owner: gen-ai-platform
+    example.io/risk-level: high
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-4o-mini
+      host: mock-llm.agentgateway-system.svc.cluster.local
+      port: 80
+  policies:
+    auth:
+      passthrough: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: internal-core-banking-mcp
+  namespace: agentgateway-system
+  labels:
+    example.io/use-case: account-servicing
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: enterprise-mcp-gateway
+    sectionName: mcp-http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp/core-banking
+    backendRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: internal-core-banking-mcp
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: internal-core-banking-mcp-rate-limit
+  namespace: agentgateway-system
+  labels:
+    example.io/use-case: account-servicing-rate-limit-test
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: enterprise-mcp-gateway
+    sectionName: mcp-http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp/core-banking-rate-limit
+    backendRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: internal-core-banking-mcp
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vendor-case-management-mcp
+  namespace: agentgateway-system
+  labels:
+    example.io/use-case: case-management
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: enterprise-mcp-gateway
+    sectionName: mcp-http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp/case-management
+    backendRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: vendor-case-management-mcp
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-llm
+  namespace: agentgateway-system
+  labels:
+    example.io/use-case: shared-llm
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: enterprise-mcp-gateway
+    sectionName: llm-http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/chat/completions
+    backendRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: approved-llm

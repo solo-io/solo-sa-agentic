@@ -1,0 +1,172 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vendor-case-management-mcp
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: vendor-case-management-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vendor-case-management-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vendor-case-management-mcp
+    spec:
+      containers:
+      - name: vendor-case-management-mcp
+        image: python:3.12-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        command:
+        - python
+        - -c
+        args:
+        - |
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          SESSION_ID = "mock-vendor-case-management-session"
+
+          TOOLS = [
+              {
+                  "name": "cases.search",
+                  "description": "Search deterministic mock vendor cases.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {"query": {"type": "string"}},
+                  },
+              },
+              {
+                  "name": "cases.add_note",
+                  "description": "Add a deterministic mock note to a case.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                          "case_id": {"type": "string"},
+                          "note": {"type": "string"}
+                      },
+                      "required": ["case_id", "note"],
+                  },
+              },
+              {
+                  "name": "cases.delete",
+                  "description": "A destructive mock vendor tool that must be blocked.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {"case_id": {"type": "string"}},
+                      "required": ["case_id"],
+                  },
+              },
+          ]
+
+          class Handler(BaseHTTPRequestHandler):
+              def log_message(self, fmt, *args):
+                  print("%s - %s" % (self.address_string(), fmt % args), flush=True)
+
+              def _json(self, status, payload, session=False):
+                  body = json.dumps(payload).encode("utf-8")
+                  self.send_response(status)
+                  self.send_header("content-type", "application/json")
+                  self.send_header("content-length", str(len(body)))
+                  if session:
+                      self.send_header("Mcp-Session-Id", SESSION_ID)
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_GET(self):
+                  if self.path in ("/healthz", "/readyz"):
+                      self._json(200, {"status": "ok"})
+                      return
+                  self._json(404, {"error": "not found"})
+
+              def do_POST(self):
+                  length = int(self.headers.get("content-length", "0"))
+                  raw = self.rfile.read(length) if length else b"{}"
+                  try:
+                      request = json.loads(raw.decode("utf-8"))
+                  except Exception:
+                      self._json(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+                      return
+
+                  method = request.get("method")
+                  request_id = request.get("id")
+
+                  if method == "initialize":
+                      self._json(200, {
+                          "jsonrpc": "2.0",
+                          "id": request_id,
+                          "result": {
+                              "protocolVersion": "2025-06-18",
+                              "capabilities": {"tools": {}},
+                              "serverInfo": {"name": "vendor-case-management-mcp", "version": "0.1.0"},
+                          },
+                      }, session=True)
+                      return
+
+                  if method == "notifications/initialized":
+                      self._json(202, {})
+                      return
+
+                  if method == "tools/list":
+                      self._json(200, {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}})
+                      return
+
+                  if method == "tools/call":
+                      params = request.get("params") or {}
+                      name = params.get("name")
+                      args = params.get("arguments") or {}
+                      if name == "cases.search":
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {
+                                  "content": [{"type": "text", "text": "found mock vendor case case-001"}],
+                                  "structuredContent": {"cases": [{"case_id": "case-001", "status": "open"}]},
+                              },
+                          })
+                          return
+                      if name == "cases.add_note":
+                          case_id = args.get("case_id", "case-001")
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {
+                                  "content": [{"type": "text", "text": "added note to " + case_id}],
+                                  "structuredContent": {"case_id": case_id, "status": "note_added"},
+                              },
+                          })
+                          return
+                      if name == "cases.delete":
+                          case_id = args.get("case_id", "case-001")
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {
+                                  "content": [{"type": "text", "text": "deleted case " + case_id}],
+                                  "structuredContent": {"case_id": case_id, "status": "deleted"},
+                              },
+                          })
+                          return
+                      self._json(404, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "unknown tool"}})
+                      return
+
+                  self._json(404, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "method not found"}})
+
+          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi

@@ -1,0 +1,98 @@
+apiVersion: ratelimit.solo.io/v1alpha1
+kind: RateLimitConfig
+metadata:
+  name: per-agent-mcp-global-rate-limit
+  namespace: agentgateway-system
+  labels:
+    example.io/control: global-rate-limit
+spec:
+  raw:
+    domain: enterprise-mcp
+    descriptors:
+    - key: X-Agent-ID
+      rateLimit:
+        unit: MINUTE
+        requestsPerUnit: 100
+    rateLimits:
+    - actions:
+      - requestHeaders:
+          descriptorKey: X-Agent-ID
+          headerName: X-Agent-ID
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: mcp-route-local-rate-limit
+  namespace: agentgateway-system
+  labels:
+    example.io/control: local-rate-limit
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: internal-core-banking-mcp-rate-limit
+  traffic:
+    rateLimit:
+      local:
+      - unit: Minutes
+        requests: 5
+        burst: 1
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: mcp-route-global-rate-limit
+  namespace: agentgateway-system
+  labels:
+    example.io/control: global-rate-limit
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: internal-core-banking-mcp-rate-limit
+  traffic:
+    entRateLimit:
+      global:
+        rateLimitConfigRefs:
+        - name: per-agent-mcp-global-rate-limit
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: approved-llm-token-and-prompt-guard
+  namespace: agentgateway-system
+  labels:
+    example.io/control: llm-guardrails
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: approved-llm
+  backend:
+    ai:
+      promptGuard:
+        request:
+        - regex:
+            action: Mask
+            builtins:
+            - Ssn
+            - CreditCard
+            - PhoneNumber
+            - Email
+        - regex:
+            action: Reject
+            matches:
+            - '(?i)ignore (all|previous|all previous) instructions'
+            - '(?i)you are now (?:in )?developer mode'
+            - '(?i)pretend you have no (?:rules|restrictions)'
+          response:
+            statusCode: 400
+            message: Request blocked by prompt policy.
+        response:
+        - regex:
+            action: Mask
+            builtins:
+            - Ssn
+            - CreditCard
+            - PhoneNumber
+            - Email

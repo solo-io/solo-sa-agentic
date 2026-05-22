@@ -1,0 +1,84 @@
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-agentgateway-otel-access
+  namespace: telemetry
+spec:
+  from:
+  - group: enterpriseagentgateway.solo.io
+    kind: EnterpriseAgentgatewayPolicy
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+    name: opentelemetry-collector-traces
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: enterprise-mcp-observability
+  namespace: agentgateway-system
+  labels:
+    example.io/control: observability-governance
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: enterprise-mcp-gateway
+  frontend:
+    tracing:
+      backendRef:
+        name: opentelemetry-collector-traces
+        namespace: telemetry
+        port: 4317
+      protocol: GRPC
+      clientSampling: "true"
+      randomSampling: "true"
+      resources:
+      - name: service.name
+        expression: '"enterprise-mcp-gateway"'
+      - name: deployment.environment.name
+        expression: 'default(request.headers["x-environment"], "sandbox")'
+      attributes:
+        add:
+        - name: agent.id
+          expression: 'default(jwt.agent_id, request.headers["x-agent-id"])'
+        - name: use_case.id
+          expression: 'default(jwt.use_case_id, request.headers["x-use-case-id"])'
+        - name: mcp.method_name
+          expression: 'default(mcp.methodName, "")'
+        - name: mcp.session_id
+          expression: 'default(mcp.sessionId, "")'
+        - name: mcp.tool_name
+          expression: 'default(mcp.tool.name, "")'
+        - name: mcp.tool_target
+          expression: 'default(mcp.tool.target, "")'
+        - name: llm.provider
+          expression: 'default(llm.provider, "")'
+        - name: llm.request_model
+          expression: 'default(llm.requestModel, "")'
+        - name: llm.input_tokens
+          expression: 'default(llm.inputTokens, 0)'
+        - name: llm.output_tokens
+          expression: 'default(llm.outputTokens, 0)'
+    accessLog:
+      otlp:
+        backendRef:
+          name: opentelemetry-collector-traces
+          namespace: telemetry
+          port: 4317
+        protocol: GRPC
+      attributes:
+        add:
+        - name: agent.id
+          expression: 'default(jwt.agent_id, request.headers["x-agent-id"])'
+        - name: use_case.id
+          expression: 'default(jwt.use_case_id, request.headers["x-use-case-id"])'
+        - name: http.route
+          expression: 'default(request.path, "")'
+        - name: http.status_code
+          expression: response.code
+        - name: mcp.tool_name
+          expression: 'default(mcp.tool.name, "")'
+        - name: llm.total_tokens
+          expression: 'default(llm.totalTokens, 0)'

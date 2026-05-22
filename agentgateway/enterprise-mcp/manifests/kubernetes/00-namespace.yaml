@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentgateway-system
+  labels:
+    app.kubernetes.io/part-of: enterprise-mcp-platform
+    example.io/environment: sandbox
+    example.io/governance-domain: mcp
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: telemetry
+  labels:
+    app.kubernetes.io/part-of: enterprise-mcp-platform
+    example.io/environment: sandbox
+    example.io/governance-domain: observability

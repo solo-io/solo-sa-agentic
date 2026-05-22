@@ -1,0 +1,171 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-coordination-service
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: agent-coordination-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-coordination-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-coordination-service
+    spec:
+      containers:
+      - name: agent-coordination-service
+        image: python:3.12-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        command:
+        - python
+        - -c
+        args:
+        - |
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          SESSION_ID = "mock-agent-coordination-session"
+
+          TOOLS = [
+              {
+                  "name": "delegate_task",
+                  "description": "Delegate a task to another mock agent.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                          "target_agent": {"type": "string"},
+                          "task": {"type": "string"}
+                      },
+                      "required": ["target_agent", "task"],
+                  },
+              },
+              {
+                  "name": "get_agent_status",
+                  "description": "Return a deterministic mock agent status.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                          "agent_id": {"type": "string"}
+                      },
+                      "required": ["agent_id"],
+                  },
+              },
+              {
+                  "name": "terminate_agent",
+                  "description": "A destructive mock coordination tool that must be blocked.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {
+                          "agent_id": {"type": "string"}
+                      },
+                      "required": ["agent_id"],
+                  },
+              },
+          ]
+
+          class Handler(BaseHTTPRequestHandler):
+              def log_message(self, fmt, *args):
+                  print("%s - %s" % (self.address_string(), fmt % args), flush=True)
+
+              def _json(self, status, payload, session=False):
+                  body = json.dumps(payload).encode("utf-8")
+                  self.send_response(status)
+                  self.send_header("content-type", "application/json")
+                  self.send_header("content-length", str(len(body)))
+                  if session:
+                      self.send_header("Mcp-Session-Id", SESSION_ID)
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_GET(self):
+                  if self.path in ("/healthz", "/readyz"):
+                      self._json(200, {"status": "ok"})
+                      return
+                  self._json(404, {"error": "not found"})
+
+              def do_POST(self):
+                  length = int(self.headers.get("content-length", "0"))
+                  raw = self.rfile.read(length) if length else b"{}"
+                  try:
+                      request = json.loads(raw.decode("utf-8"))
+                  except Exception:
+                      self._json(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+                      return
+
+                  method = request.get("method")
+                  request_id = request.get("id")
+
+                  if method == "initialize":
+                      self._json(200, {
+                          "jsonrpc": "2.0",
+                          "id": request_id,
+                          "result": {
+                              "protocolVersion": "2025-06-18",
+                              "capabilities": {"tools": {}},
+                              "serverInfo": {"name": "agent-coordination-service", "version": "0.1.0"},
+                          },
+                      }, session=True)
+                      return
+
+                  if method == "tools/list":
+                      self._json(200, {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}})
+                      return
+
+                  if method == "tools/call":
+                      params = request.get("params") or {}
+                      name = params.get("name")
+                      args = params.get("arguments") or {}
+                      if name == "delegate_task":
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {
+                                  "content": [{"type": "text", "text": "delegated task to " + args.get("target_agent", "agent")}],
+                                  "structuredContent": {"status": "delegated", "target_agent": args.get("target_agent", "agent")},
+                              },
+                          })
+                          return
+                      if name == "get_agent_status":
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {
+                                  "content": [{"type": "text", "text": "agent is healthy"}],
+                                  "structuredContent": {"status": "healthy"},
+                              },
+                          })
+                          return
+                      if name == "terminate_agent":
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {
+                                  "content": [{"type": "text", "text": "terminated " + args.get("agent_id", "agent")}],
+                                  "structuredContent": {"status": "terminated"},
+                              },
+                          })
+                          return
+                      self._json(404, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "unknown tool"}})
+                      return
+
+                  self._json(404, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "method not found"}})
+
+          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 128Mi

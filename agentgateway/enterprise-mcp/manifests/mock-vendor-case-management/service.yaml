@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vendor-case-management-mcp
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: vendor-case-management-mcp
+spec:
+  selector:
+    app.kubernetes.io/name: vendor-case-management-mcp
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

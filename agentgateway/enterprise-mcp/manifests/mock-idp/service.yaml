@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: enterprise-idp
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: enterprise-idp
+spec:
+  selector:
+    app.kubernetes.io/name: enterprise-idp
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-coordination-service
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: agent-coordination-service
+spec:
+  selector:
+    app.kubernetes.io/name: agent-coordination-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

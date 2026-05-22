@@ -1,0 +1,76 @@
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: enterprise-mcp-jwt
+  namespace: agentgateway-system
+  labels:
+    example.io/control: identity-authentication
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: internal-core-banking-mcp
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: internal-core-banking-mcp-rate-limit
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: vendor-case-management-mcp
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: http://enterprise-idp.agentgateway-system.svc.cluster.local:8080/realms/agents
+        audiences:
+        - enterprise-mcp-platform
+        jwks:
+          remote:
+            jwksPath: /realms/agents/protocol/openid-connect/certs
+            cacheDuration: 5m
+            backendRef:
+              group: ""
+              kind: Service
+              name: enterprise-idp
+              namespace: agentgateway-system
+              port: 8080
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: core-banking-tool-allowlist
+  namespace: agentgateway-system
+  labels:
+    example.io/control: per-agent-tool-allowlist
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: internal-core-banking-mcp
+  backend:
+    mcp:
+      authorization:
+        policy:
+          matchExpressions:
+          - 'jwt.agent_id == "agt-account-servicing-prod" && mcp.tool.name == "accounts.get_summary"'
+          - 'jwt.agent_id == "agt-account-servicing-prod" && mcp.tool.name == "transactions.search" && jwt.scope.exists(s, s == "accounts.read")'
+          - 'jwt.agent_id == "agt-fraud-review-prod" && mcp.tool.name == "transactions.search" && jwt.scope.exists(s, s == "fraud.read")'
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: vendor-case-management-tool-allowlist
+  namespace: agentgateway-system
+  labels:
+    example.io/control: vendor-tool-allowlist
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: vendor-case-management-mcp
+  backend:
+    mcp:
+      authorization:
+        policy:
+          matchExpressions:
+          - 'jwt.agent_id == "agt-case-management-prod" && mcp.tool.name == "cases.search"'
+          - 'jwt.agent_id == "agt-case-management-prod" && mcp.tool.name == "cases.add_note" && jwt.scope.exists(s, s == "cases.write")'

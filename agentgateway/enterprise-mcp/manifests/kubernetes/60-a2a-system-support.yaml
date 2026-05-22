@@ -1,0 +1,91 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: agent-coordination-service
+  namespace: agentgateway-system
+  labels:
+    example.io/tool-owner: agent-platform
+    example.io/risk-level: high
+    example.io/tool-type: a2a
+spec:
+  mcp:
+    targets:
+    - name: agent-coordination
+      static:
+        host: agent-coordination-service.agentgateway-system.svc.cluster.local
+        port: 8080
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agent-coordination
+  namespace: agentgateway-system
+  labels:
+    example.io/use-case: multi-agent-coordination
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: enterprise-mcp-gateway
+    sectionName: mcp-http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /a2a/coordination
+    backendRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: agent-coordination-service
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: agent-coordination-jwt
+  namespace: agentgateway-system
+  labels:
+    example.io/control: multi-agent-identity
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: agent-coordination
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: http://enterprise-idp.agentgateway-system.svc.cluster.local:8080/realms/agents
+        audiences:
+        - enterprise-mcp-platform
+        jwks:
+          remote:
+            jwksPath: /realms/agents/protocol/openid-connect/certs
+            cacheDuration: 5m
+            backendRef:
+              group: ""
+              kind: Service
+              name: enterprise-idp
+              namespace: agentgateway-system
+              port: 8080
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: agent-coordination-allowlist
+  namespace: agentgateway-system
+  labels:
+    example.io/control: multi-agent-isolation
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: agent-coordination-service
+  backend:
+    mcp:
+      authorization:
+        policy:
+          matchExpressions:
+          - 'jwt.agent_id == "agt-supervisor-prod" && mcp.tool.name == "delegate_task"'
+          - 'jwt.agent_id == "agt-supervisor-prod" && mcp.tool.name == "get_agent_status"'
