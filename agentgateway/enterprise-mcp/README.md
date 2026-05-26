@@ -628,3 +628,33 @@ spec:
           namespace: telemetry
           port: 4317
 ```
+
+## 10. Code Mode
+
+
+## 11. External Vendor MCP Server
+
+github copilot mcp server example
+
+## 12. OBO
+
+### Agent Identity With OBO
+
+This also falls under the request for “Agent “Isolation: “if its this agent identity, only allow these MCP Server tools”
+
+Example in the agw policy: `jwt.act.sub == "research-agent" && mcp.tool.name in ["search", "fetch_doc”]`
+
+## 13. Observability
+
+### Cost Optimization
+
+Per token count/limit
+
+### Agw Dashboard
+
+### Datadog
+
+- Show token usage
+- Show errors/requests by model
+- Show tracing
+- MCP tool calls
