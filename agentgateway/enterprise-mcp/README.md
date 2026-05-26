@@ -631,6 +631,8 @@ spec:
 
 ## 10. Code Mode
 
+Using the Code Mode backend translates non-MCP tools into MCP-looking tools so Agents can use them. Code Mode is used to interact with tools/APIs that aren't MCP Servers/tools, but you still want to use them in your agentic workflow, so it "translates" them to look like mcp server tools so they can be used by your Agents. The protocol bridge is OpenAPI.
+
 1. Create a gateway for your traffic to route through
 ```
 kubectl apply -f - <<EOF
@@ -686,7 +688,8 @@ data:
 EOF
 ```
 
-3. Implement a backend that uses the OpenAPI format spec and a static host target to call the the Geocoding API endpoint
+3. Implement a backend that uses the OpenAPI format spec and a static host target to call the the Geocoding API endpoint.
+
 ```
 kubectl apply -f - <<EOF
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
