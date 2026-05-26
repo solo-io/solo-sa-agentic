@@ -631,6 +631,88 @@ spec:
 
 ## 10. Code Mode
 
+```
+kubectl apply -f - <<EOF
+ apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: open-meteo-geocoding-openapi
+    namespace: agentgateway-system
+  data:
+    openapi.json: |
+      {
+        "openapi": "3.0.0",
+        "info": { "title": "Open-Meteo Geocoding", "version": "1.0.0" },
+        "servers": [{ "url": "https://geocoding-api.open-meteo.com/v1" }],
+        "paths": {
+          "/search": {
+            "get": {
+              "operationId": "geocode_city",
+              "description": "Resolve a city name to latitude/longitude and country.",
+              "parameters": [
+                { "name": "name", "in": "query", "required": true,
+                  "schema": { "type": "string" },
+                  "description": "City name, e.g. \"Paris\"." },
+                { "name": "count", "in": "query", "required": false,
+                  "schema": { "type": "integer", "default": 1 },
+                  "description": "Max results to return." }
+              ],
+              "responses": { "200": { "description": "OK" } }
+            }
+          }
+        }
+      }
+EOF
+```
+
+```
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata:
+  name: geocoding-code-mode
+  namespace: agentgateway-system
+spec:
+  entMcp:
+    toolMode: Code
+    codeMode:
+      timeout: 10s          # default is 5s; bumped for cold-cache latency
+    targets:
+      - name: geocoding
+        static:
+          host: geocoding-api.open-meteo.com
+          port: 443
+          protocol: OpenAPI
+          openAPI:
+            schemaRef:
+              name: open-meteo-geocoding-openapi
+          policies:
+            tls: {}         # originate HTTPS to upstream using system CA bundle
+EOF
+```
+
+```
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: geocoding-mcp
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: mcp-gateway     # one of your existing Gateways
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp/geocoding
+      backendRefs:
+        - group: enterpriseagentgateway.solo.io
+          kind: EnterpriseAgentgatewayBackend
+          name: geocoding-code-mode
+EOF
+```
+
 
 ## 11. External Vendor MCP Server
 
