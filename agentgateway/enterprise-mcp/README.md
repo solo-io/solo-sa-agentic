@@ -632,6 +632,7 @@ spec:
 ## 10. Code Mode
 
 ```
+kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -646,6 +647,7 @@ spec:
       allowedRoutes:
         namespaces:
           from: Same
+EOF
 ```
 
 ```
