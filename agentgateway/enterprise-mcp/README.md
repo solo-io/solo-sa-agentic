@@ -632,6 +632,23 @@ spec:
 ## 10. Code Mode
 
 ```
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: codemode-gateway
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: enterprise-agentgateway
+  listeners:
+    - name: mcp
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+```
+
+```
 kubectl apply -f - <<EOF
  apiVersion: v1
   kind: ConfigMap
@@ -700,7 +717,7 @@ metadata:
   namespace: agentgateway-system
 spec:
   parentRefs:
-    - name: mcp-gateway     # one of your existing Gateways
+    - name: codemode-gateway
   rules:
     - matches:
         - path:
