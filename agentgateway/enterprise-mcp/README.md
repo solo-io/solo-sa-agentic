@@ -739,6 +739,8 @@ spec:
 EOF
 ```
 
+Open MCP Inspector, another MCP client, or use `curl` to test your Gateway.
+
 
 ## 11. External Vendor MCP Server
 
