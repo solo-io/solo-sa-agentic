@@ -1397,6 +1397,17 @@ Per token count/limit
 
 ### Agw Dashboard
 
+
+![](../images/agw-route-obs.png)
+
+![](../images/agw-trace-dashboard.png)
+
+![](../images/agw-dashboard.png)
+
+
+
+
+
 ### Datadog
 
 - Show token usage

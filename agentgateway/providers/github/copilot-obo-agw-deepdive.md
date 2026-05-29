@@ -1,60 +1,92 @@
 ## For Observability/metrics shown in the UI
 
-```
+The kagent Dashboard reads from ClickHouse, which is fed by the `solo-enterprise-telemetry-collector` (in the `kagent` namespace). The collector receives OTLP spans + access logs from agentgateway. Two resources need to exist for the dashboard to populate:
+
+1. An `EnterpriseAgentgatewayPolicy` attached to the Gateway you want traced, with both `tracing` and `accessLog` configured to ship to the collector, **and** with the right CEL attributes so MCP tool names, LLM model names, and token counts land in ClickHouse.
+2. A `ReferenceGrant` in the `kagent` namespace allowing cross-namespace reference to the collector Service.
+
+The policy below is the one actually attached to `mcp-gateway` in the demo cluster. It captures:
+- **MCP attributes** for the `Tool Requests` dashboard panel (`gen_ai.tool.name`, `mcp.tool_name`, `mcp.tool_target`, `mcp.method_name`, `mcp.session_id`).
+- **LLM attributes** for the `Token Usage By Model` and `Tokens Used` panels (`llm.provider`, `llm.request_model`, `llm.response_model`, `llm.input_tokens`, `llm.output_tokens`, `llm.total_tokens`).
+- **HTTP attributes** for the `Requests Over Time` and `Errors Over Time` panels (status codes, paths — these come from access log defaults).
+
+```yaml
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayPolicy
 metadata:
-name: agentgateway-entra-testing-observability
-namespace: agentgateway-system
+  name: mcp-gateway-tracing
+  namespace: agentgateway-system
 spec:
-targetRefs:
-- group: gateway.networking.k8s.io
-    kind: Gateway
-    name: agentgateway-entra-testing
-frontend:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: mcp-gateway
+  frontend:
     tracing:
-    backendRef:
+      backendRef:
+        group: ""
+        kind: Service
         name: solo-enterprise-telemetry-collector
         namespace: kagent
         port: 4317
-    protocol: GRPC
-    clientSampling: "true"
-    randomSampling: "true"
-    resources:
-    - name: service.name
-        expression: '"agentgateway-entra-testing"'
-    attributes:
+      protocol: GRPC
+      clientSampling: "true"
+      randomSampling: "true"
+      resources:
+        - { name: service.name,                 expression: '"mcp-gateway"' }
+        - { name: deployment.environment.name,  expression: '"demo"' }
+      attributes:
         add:
-        - { name: mcp.method_name, expression: 'default(mcp.methodName, "")' }
-        - { name: mcp.tool_name,   expression: 'default(mcp.tool.name, "")' }
-        - { name: llm.provider,        expression: 'default(llm.provider, "")' }
-        - { name: llm.request_model,   expression: 'default(llm.requestModel, "")' }
-        - { name: llm.input_tokens,    expression: 'default(llm.inputTokens, 0)' }
-        - { name: llm.output_tokens,   expression: 'default(llm.outputTokens, 0)' }
+          - { name: request.host,        expression: 'request.host' }
+          - { name: mcp.method_name,     expression: 'default(mcp.methodName, "")' }
+          - { name: mcp.session_id,      expression: 'default(mcp.sessionId, "")' }
+          - { name: mcp.tool_name,       expression: 'default(mcp.tool.name, "")' }
+          - { name: backend.name,        expression: 'default(backend.name, "")' }
+          - { name: llm.provider,        expression: 'default(llm.provider, "")' }
+          - { name: llm.request_model,   expression: 'default(llm.requestModel, "")' }
+          - { name: llm.response_model,  expression: 'default(llm.responseModel, "")' }
+          - { name: llm.input_tokens,    expression: 'default(llm.inputTokens, 0)' }
+          - { name: llm.output_tokens,   expression: 'default(llm.outputTokens, 0)' }
+          - { name: llm.total_tokens,    expression: 'default(llm.totalTokens, 0)' }
     accessLog:
-    otlp:
+      otlp:
         backendRef:
-        name: solo-enterprise-telemetry-collector
-        namespace: kagent
-        port: 4317
+          group: ""
+          kind: Service
+          name: solo-enterprise-telemetry-collector
+          namespace: kagent
+          port: 4317
         protocol: GRPC
-    attributes:
+      attributes:
         add:
-        - { name: http.route,       expression: 'default(request.path, "")' }
-        - { name: http.status_code, expression: 'response.code' }
+          - { name: gen_ai.tool.name,    expression: 'default(mcp.tool.name, "")' }
+          - { name: mcp.tool_name,       expression: 'default(mcp.tool.name, "")' }
+          - { name: mcp.tool_target,     expression: 'default(mcp.tool.target, "")' }
+          - { name: mcp.method_name,     expression: 'default(mcp.methodName, "")' }
+          - { name: llm.provider,        expression: 'default(llm.provider, "")' }
+          - { name: llm.request_model,   expression: 'default(llm.requestModel, "")' }
+          - { name: llm.response_model,  expression: 'default(llm.responseModel, "")' }
+          - { name: llm.input_tokens,    expression: 'default(llm.inputTokens, 0)' }
+          - { name: llm.output_tokens,   expression: 'default(llm.outputTokens, 0)' }
+          - { name: llm.total_tokens,    expression: 'default(llm.totalTokens, 0)' }
 ---
-# in kagent — allow the policy to reference the collector cross-namespace
+# In the kagent namespace — allow the agentgateway-system policy above to
+# reference the telemetry collector Service across namespaces.
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:
-name: allow-agentgateway-otel-access
-namespace: kagent
+  name: allow-agentgateway-otel-access
+  namespace: kagent
 spec:
-from:
-- { group: enterpriseagentgateway.solo.io, kind: EnterpriseAgentgatewayPolicy, namespace: agentgateway-system }
-to:
-- { group: "", kind: Service, name: solo-enterprise-telemetry-collector }
+  from:
+    - { group: enterpriseagentgateway.solo.io, kind: EnterpriseAgentgatewayPolicy, namespace: agentgateway-system }
+  to:
+    - { group: "", kind: Service, name: solo-enterprise-telemetry-collector }
 ```
+
+**Important:** the `llm.*` attributes only populate when traffic flows through an **AI-type backend** (`spec.ai.provider.*` on the backend). If traffic instead flows through a plain `Service` backend (e.g. an in-cluster LLM proxy), agentgateway has no way to parse the request as an LLM call and these attributes stay empty — leaving the `Tokens Used` and `Token Usage By Model` panels showing zero. For the dashboard to populate fully, route LLM traffic to an AI backend (Anthropic, OpenAI, etc.) on the same gateway this policy targets.
+
+If you target a different Gateway, change `spec.targetRefs[0].name`, the `service.name` resource expression, and the policy `metadata.name` to match.
 
 ## MCP Tool Selection
 
