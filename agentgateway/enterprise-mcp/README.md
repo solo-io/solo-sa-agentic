@@ -1145,8 +1145,6 @@ Without this env var, kagent will not forward the user's Entra access token to t
 
 ### Agent Identity With OBO
 
-### Agent Identity With OBO
-
 "if it's this agent identity, only allow these MCP server tools."
 
 The mechanism is `backend.mcp.authorization` on an `EnterpriseAgentgatewayPolicy`, evaluating CEL expressions that gate `mcp.tool.name` on whichever signal carries agent identity. In the running Entra OBO setup, that signal is an `X-Agent-Name` HTTP header (see the next subsection for why the OBO token doesn't carry an `act` claim). `jwt.sub` is also available if you want to gate on user identity. With one or more `Allow` rules present, the policy becomes **deny-by-default** and every other tool is invisible to the agent.
