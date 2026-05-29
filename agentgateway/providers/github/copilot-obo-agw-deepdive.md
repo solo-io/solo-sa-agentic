@@ -606,97 +606,247 @@ Without this env var, kagent will not forward the user's Entra access token to t
 
 "if it's this agent identity, only allow these MCP server tools."
 
-The mechanism is `backend.mcp.authorization` on an `AgentgatewayPolicy`, evaluating CEL expressions where `jwt.sub` is the user and `jwt.act.sub` is the agent. With one or more `Allow` rules present, the policy becomes **deny-by-default** — every other tool is invisible to the agent.
+The mechanism is `backend.mcp.authorization` on an `EnterpriseAgentgatewayPolicy`, evaluating CEL expressions that gate `mcp.tool.name` on whichever signal carries agent identity. In the running Entra OBO setup, that signal is an `X-Agent-Name` HTTP header (see the next subsection for why the OBO token doesn't carry an `act` claim). `jwt.sub` is also available if you want to gate on user identity. With one or more `Allow` rules present, the policy becomes **deny-by-default** and every other tool is invisible to the agent.
 
 **Example:**
 
 ```yaml
 matchExpressions:
-  - 'jwt.act.sub == "system:serviceaccount:demo-ns:research-agent" && mcp.tool.name in ["search", "fetch_doc"]'
+  - 'request.headers["x-agent-name"] == "obo-readonly-agent" && mcp.tool.name.startsWith("search_")'
 ```
 
-Different `act.sub` values get different visible toolsets — same backend, same MCP server, per-agent enforcement. The killer feature: **`list_tools` filters per-item**, so `research-agent` doesn't even *see* the tools it can't call; it never has to attempt a forbidden call and get a 403.
+Different `X-Agent-Name` values get different visible toolsets — same backend, same MCP server, per-agent enforcement. The killer feature: **`list_tools` filters per-item**, so `obo-readonly-agent` doesn't even *see* the tools it can't call; it never has to attempt a forbidden call and get a 403.
 
 #### OBO Agent/tool isolation for MCP
 
-A complete, working example. Backend exposes 4 hypothetical MCP tools (`search`, `fetch_doc`, `create_doc`, `delete_doc`); policy restricts each agent to a subset based on its `act` claim.
+Prerequisite:
+1. `mcp-gateway` in the **MCP Tool Selection** section is deployed
+2. `mcp-gateway` must reference the STS parameters
+
+The Gateway that fronts the MCP backend needs `infrastructure.parametersRef` so the dataplane behind it receives `STS_URI` and `STS_AUTH_TOKEN`. Without this, OBO can't work on routes attached to this Gateway. Pointing at the same `EnterpriseAgentgatewayParameters` used by the LLM-proxy demo is the simplest path:
 
 ```yaml
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-gateway
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: enterprise-agentgateway
+  infrastructure:
+    parametersRef:
+      group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayParameters
+      name: agentgateway-entra-testing-enterprise
+  listeners:
+    - name: mcp
+      port: 3000
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+EOF
+```
+
+##### `RemoteMCPServer` — single resource referenced by both agents
+
+```yaml
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: github-mcp-via-gateway
+  namespace: kagent
+spec:
+  description: "GitHub Copilot MCP server accessed via agentgateway (mcp-gateway)"
+  protocol: STREAMABLE_HTTP
+  url: http://mcp-gateway.agentgateway-system.svc.cluster.local:3000/mcp
+```
+
+##### Two agents — same MCP server, different `X-Agent-Name`
+
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata: { name: obo-demo-agent, namespace: kagent }
+spec:
+  description: Full-access agent (gateway RBAC blocks merge/delete/secret-scan)
+  type: Declarative
+  declarative:
+    modelConfig: anthropic-model-config
+    deployment:
+      env:
+        - { name: KAGENT_PROPAGATE_TOKEN, value: "true" }
+    systemMessage: |
+      You can use GitHub MCP tools to manage issues, pull requests, and code.
+      You cannot merge PRs, delete files, or run secret scans.
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: github-mcp-via-gateway
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          toolNames: [ <all 46 GitHub MCP tool names — populate via `tools/list`> ]
+        headersFrom:
+          - { name: X-Agent-Name, value: obo-demo-agent }
 ---
-# Backend pointing at a real MCP server (StreamableHTTP)
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata: { name: obo-readonly-agent, namespace: kagent }
+spec:
+  description: Read-only agent (gateway RBAC restricts to search/list/get/read)
+  type: Declarative
+  declarative:
+    modelConfig: anthropic-model-config
+    deployment:
+      env:
+        - { name: KAGENT_PROPAGATE_TOKEN, value: "true" }
+    systemMessage: |
+      You are a read-only research assistant. Search, list, and read only.
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: github-mcp-via-gateway
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          toolNames: [ <same 46-tool list> ]
+        headersFrom:
+          - { name: X-Agent-Name, value: obo-readonly-agent }
+EOF
+```
+
+`toolNames` is required by kagent as it's the upper bound the agent runtime exposes to the LLM. Both agents list ALL 46 tools so the gateway is the sole filter. When each agent calls `tools/list` through the gateway, the gateway's CEL RBAC filters per-item and the LLM only learns about the tools that pass.
+
+Capture the live tool list once and reuse. First grab the gateway IP (re-used by every `curl` below in this section):
+
+```bash
+export GW_IP=$(kubectl get svc mcp-gateway -n agentgateway-system \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "Gateway: http://${GW_IP}:3000/mcp"
+```
+
+Then run the MCP init dance and list the tools. All three curls include `X-Agent-Name: obo-demo-agent` so the recipe works whether or not the RBAC policy below has been applied — without that header, the deny-by-default policy returns an empty tool list and `jq` prints nothing.
+
+```bash
+SID=$(curl -sS -i -X POST "http://${GW_IP}:3000/mcp" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'X-Agent-Name: obo-demo-agent' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"c","version":"0"}}}' \
+  | awk 'tolower($1)=="mcp-session-id:"{print $2}' | tr -d '\r')
+
+curl -sS -X POST "http://${GW_IP}:3000/mcp" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'X-Agent-Name: obo-demo-agent' \
+  -H "mcp-session-id: ${SID}" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
+
+curl -sS -X POST "http://${GW_IP}:3000/mcp" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'X-Agent-Name: obo-demo-agent' \
+  -H "mcp-session-id: ${SID}" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | sed 's/^data: //' \
+  | jq -r '.result.tools[].name'
+```
+
+Once the RBAC policy below is applied, this returns **43 of the 46 tools**. The three tools blocked from `obo-demo-agent` (`merge_pull_request`, `delete_file`, `run_secret_scanning`) need to be added to `toolNames` manually. If you run this recipe **before** applying the RBAC policy, you'll get all 46 in one go.
+
+##### The RBAC policy: CEL gates `mcp.tool.name` on `X-Agent-Name`
+
+```yaml
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
-kind: EnterpriseAgentgatewayBackend
+kind: EnterpriseAgentgatewayPolicy
 metadata:
-  name: docs-mcp
-  namespace: agentgateway-system
-spec:
-  entMcp:
-    targets:
-      - name: docs
-        static:
-          host: docs-mcp.demo-ns.svc.cluster.local
-          port: 8080
-          protocol: StreamableHTTP
----
-# JWT authentication — validates whichever issuer is minting the OBO token.
-# For Copilot, this is your enterprise IdP. For kagent, this is kagent's /jwks.json.
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: docs-mcp-auth
+  name: github-mcp-rbac
   namespace: agentgateway-system
 spec:
   targetRefs:
-    - kind: EnterpriseAgentgatewayBackend
-      name: docs-mcp
-  traffic:
-    jwtAuthentication:
-      mode: Strict
-      providers:
-        - issuer: "kagent.kagent"                     # kagent's iss claim
-          audiences: ["docs-mcp"]
-          jwks:
-            url: "http://kagent.kagent.svc.cluster.local:8080/jwks.json"
-            cacheDuration: 5m
-      mcp:
-        # publishes /.well-known/oauth-protected-resource for MCP clients
-        resourceMetadata: {}
----
-# Per-agent tool isolation. With ≥1 Allow rule, this is deny-by-default.
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: docs-mcp-rbac
-  namespace: agentgateway-system
-spec:
-  targetRefs:
-    - kind: EnterpriseAgentgatewayBackend
-      name: docs-mcp
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
+      name: github-mcp-server
   backend:
     mcp:
       authorization:
         action: Allow
         policy:
           matchExpressions:
-            # Read-only research agent — search + fetch only
-            - 'jwt.act.sub == "system:serviceaccount:demo-ns:research-agent"
-                && mcp.tool.name in ["search", "fetch_doc"]'
-            # Writer agent — full read/write but no delete, scoped to its user
-            - 'jwt.act.sub == "system:serviceaccount:demo-ns:writer-agent"
-                && mcp.tool.name in ["search", "fetch_doc", "create_doc"]'
-            # GitHub Copilot (when Copilot is the agent in OBO)
-            - 'jwt.act.sub == "github-copilot"
-                && mcp.tool.name in ["search", "fetch_doc"]'
+            # Read-only persona — search/get/list + dedicated *_read tools
+            - 'request.headers["x-agent-name"] == "obo-readonly-agent" && (mcp.tool.name.startsWith("search_") || mcp.tool.name.startsWith("get_") || mcp.tool.name.startsWith("list_") || mcp.tool.name in ["issue_read", "pull_request_read"])'
+            # Full persona — everything EXCEPT destructive/admin tools
+            - 'request.headers["x-agent-name"] == "obo-demo-agent" && !(mcp.tool.name in ["merge_pull_request", "delete_file", "run_secret_scanning"])'
 ```
 
-**What this demonstrates on stage:**
+With at least one `Allow` rule present, the policy is deny-by-default, so any request whose `X-Agent-Name` doesn't match a rule sees zero tools and gets zero authorizations.
 
-1. Connect MCP Inspector as `research-agent` (OBO token with `act.sub = system:serviceaccount:demo-ns:research-agent`) → `tools/list` returns `["search", "fetch_doc"]`.
-2. Connect as `writer-agent` (same user!) → `tools/list` returns `["search", "fetch_doc", "create_doc"]`.
-3. Try calling `delete_doc` from either → denied. The tool isn't even visible.
-4. Swap the issuer to your enterprise IdP and re-run as Copilot — same enforcement, different `act` value.
+##### Testing: per-agent tool isolation
 
-The user identity (`jwt.sub`) is also available — if you want "writer-agent can only create docs for *its own* user," add `&& mcp.tool.name == "create_doc" && jwt.sub == request.headers["x-resource-owner"]` or similar.
+The fastest, most visual way to show this off is MCP Inspector — change the `X-Agent-Name` header in the UI and watch the visible tool list shrink and grow in real time. A scripted curl version follows for automation.
+
+Capture the gateway IP first (reused by both demos below):
+
+```bash
+export GW_IP=$(kubectl get svc mcp-gateway -n agentgateway-system \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "Gateway: http://${GW_IP}:3000/mcp"
+```
+
+###### Visual demo: MCP Inspector
+
+1. Open Inspector:
+   ```bash
+   npx modelcontextprotocol/inspector#0.18.0
+   ```
+2. Configure the connection:
+   - **URL**: `http://${GW_IP}:3000/mcp`
+   - **Transport**: Streamable HTTP
+   - **Custom header**: `X-Agent-Name` = `obo-demo-agent`
+3. Click **Connect**, then **List Tools** — 43 tools appear. `merge_pull_request`, `delete_file`, and `run_secret_scanning` are *not* in the list.
+4. **Disconnect**, change the header value to `obo-readonly-agent`, **Reconnect**, **List Tools** — list shrinks to 26 tools (search/get/list/read only).
+5. **Disconnect**, remove the `X-Agent-Name` header entirely, **Reconnect**, **List Tools** — empty list. Deny-by-default.
+
+###### Scriptable verification (curl)
+
+Same flow, no UI. Prints one line per persona — counts only, no tool dumps:
+
+```bash
+for name in obo-readonly-agent obo-demo-agent ""; do
+  header=()
+  [[ -n "$name" ]] && header=(-H "X-Agent-Name: ${name}")
+
+  SID=$(curl -sS -i -X POST "http://${GW_IP}:3000/mcp" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    "${header[@]}" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"c","version":"0"}}}' \
+    | awk 'tolower($1)=="mcp-session-id:"{print $2}' | tr -d '\r')
+  curl -sS -X POST "http://${GW_IP}:3000/mcp" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    "${header[@]}" \
+    -H "mcp-session-id: ${SID}" \
+    -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
+  count=$(curl -sS -X POST "http://${GW_IP}:3000/mcp" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    "${header[@]}" \
+    -H "mcp-session-id: ${SID}" \
+    -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+    | sed 's/^data: //' | jq '.result.tools | length')
+  printf "X-Agent-Name=%-22s → %d tools\n" "${name:-(none)}" "$count"
+done
+```
+
+Output:
+
+```
+X-Agent-Name=obo-readonly-agent  → 26 tools
+X-Agent-Name=obo-demo-agent      → 43 tools
+X-Agent-Name=(none)              →  0 tools
+```
 
 ## Intent-Based Routing
 
@@ -711,7 +861,7 @@ CEL transformations on the `model` field run **before** the upstream LLM call. T
 - `request.headers[...]` — any client-provided header
 - `request.body` — the raw request body (use `size(request.body)` for payload-size estimation)
 - `llm.prompt` — the parsed prompt content, **only** if prompt-capture is enabled elsewhere (prompt guard, logging); otherwise `None`
-- JWT claims — `jwt.sub`, `jwt.act.sub`, `jwt.claims.*` — present whenever JWT auth runs first
+- JWT claims — `jwt.sub`, `jwt.aud`, `jwt.azp`, `jwt.claims.*` — present whenever JWT auth runs first. **Note:** in the running Entra OBO setup the token has no `act` claim; agent identity is conveyed via `X-Agent-Name` header instead (see the OBO MCP isolation section)
 
 
 
@@ -743,11 +893,12 @@ spec:
           request.headers["x-user-tier"] == "premium"
             ? "claude-sonnet-4-6"
 
-          // Agent-based: the research agent (read-heavy) gets the cheap model;
-          // the writer agent (generation-heavy) gets the strong one.
-          : jwt.act.sub == "system:serviceaccount:demo-ns:writer-agent"
+          // Agent-based: the read-only agent gets the cheap model;
+          // the full-access agent (generation-heavy) gets the strong one.
+          // Uses the same X-Agent-Name header as the OBO MCP isolation demo.
+          : request.headers["x-agent-name"] == "obo-demo-agent"
             ? "claude-sonnet-4-6"
-          : jwt.act.sub == "system:serviceaccount:demo-ns:research-agent"
+          : request.headers["x-agent-name"] == "obo-readonly-agent"
             ? "gpt-4o-mini"
 
           // Size-based: large requests route to the high-context model.
@@ -766,7 +917,7 @@ spec:
 
 Outcome:
 1. **Same client request, different model.** Two `curl`s to the same endpoint with the same body, differing only in `x-user-tier: premium` → response model differs. Show the model name in the response.
-2. **Agent identity drives routing.** Same user, two agents in OBO flow → research-agent gets the cheap model, writer-agent gets the strong one. Token cost difference visible in logs/metrics.
+2. **Agent identity drives routing.** Same user, two agents in OBO flow → `obo-readonly-agent` gets the cheap model, `obo-demo-agent` gets the strong one. Token cost difference visible in logs/metrics.
 3. **Payload size flip.** Short prompt → cheap model. Long prompt (paste a wall of text) → strong model.
 4. **Aliases hide the providers.** Client only ever sees `default`, `smart`, `local`. Swap the underlying concrete models in the YAML — no client change.
 
@@ -923,4 +1074,4 @@ The SDK now uses agentgateway as an OpenAI-compatible endpoint. Underneath, agen
 - **One Copilot config, all models.** Public + self-hosted under one endpoint. No SDK redeploy when you add Bedrock.
 - **Data residency on demand.** Default to self-hosted; only fail over to public when local is down.
 - **Cost control.** Self-hosted handles the volume; expensive public models handle premium / overflow traffic.
-- **Compliance traceability.** Every request through the gateway is logged with user (`jwt.sub`), agent (`jwt.act.sub`), chosen model, provider, token counts.
+- **Compliance traceability.** Every request through the gateway is logged with user (`jwt.oid` / `jwt.preferred_username`), agent (`X-Agent-Name`), chosen model, provider, token counts.
