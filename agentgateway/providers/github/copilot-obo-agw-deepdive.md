@@ -1,4 +1,253 @@
+## For Observability/metrics shown in the UI
+
+```
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+name: agentgateway-entra-testing-observability
+namespace: agentgateway-system
+spec:
+targetRefs:
+- group: gateway.networking.k8s.io
+    kind: Gateway
+    name: agentgateway-entra-testing
+frontend:
+    tracing:
+    backendRef:
+        name: solo-enterprise-telemetry-collector
+        namespace: kagent
+        port: 4317
+    protocol: GRPC
+    clientSampling: "true"
+    randomSampling: "true"
+    resources:
+    - name: service.name
+        expression: '"agentgateway-entra-testing"'
+    attributes:
+        add:
+        - { name: mcp.method_name, expression: 'default(mcp.methodName, "")' }
+        - { name: mcp.tool_name,   expression: 'default(mcp.tool.name, "")' }
+        - { name: llm.provider,        expression: 'default(llm.provider, "")' }
+        - { name: llm.request_model,   expression: 'default(llm.requestModel, "")' }
+        - { name: llm.input_tokens,    expression: 'default(llm.inputTokens, 0)' }
+        - { name: llm.output_tokens,   expression: 'default(llm.outputTokens, 0)' }
+    accessLog:
+    otlp:
+        backendRef:
+        name: solo-enterprise-telemetry-collector
+        namespace: kagent
+        port: 4317
+        protocol: GRPC
+    attributes:
+        add:
+        - { name: http.route,       expression: 'default(request.path, "")' }
+        - { name: http.status_code, expression: 'response.code' }
+---
+# in kagent — allow the policy to reference the collector cross-namespace
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+name: allow-agentgateway-otel-access
+namespace: kagent
+spec:
+from:
+- { group: enterpriseagentgateway.solo.io, kind: EnterpriseAgentgatewayPolicy, namespace: agentgateway-system }
+to:
+- { group: "", kind: Service, name: solo-enterprise-telemetry-collector }
+```
+
 ## MCP Tool Selection
+
+1. Create a gateway for the MCP server you deployed
+```
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-gateway
+  namespace: agentgateway-system
+  labels:
+    app: github-mcp-server
+spec:
+  gatewayClassName: enterprise-agentgateway
+  listeners:
+    - name: mcp
+      port: 3000
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+EOF
+```
+
+2. Create a Kubernetes `Secret` holding your GitHub PAT. The value must be the full `Authorization` header (prefixed with `Bearer `), stored under the key `Authorization` — agentgateway uses this value verbatim as the header on upstream requests.
+
+```
+export GITHUB_PAT=
+
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-pat
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: "Bearer ${GITHUB_PAT}"
+EOF
+```
+
+3. Deploy a backend so the gateway knows what to route to. In this case, its the github copilot MCP server
+```
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata:
+  name: github-mcp-server
+  namespace: agentgateway-system
+spec:
+  entMcp:
+    toolMode: Standard
+    targets:
+      - name: github-copilot
+        static:
+          host: api.githubcopilot.com
+          port: 443
+          path: /mcp/
+          protocol: StreamableHTTP
+          policies:
+            tls: {}
+            auth:
+              secretRef:
+                name: github-pat
+EOF
+```
+
+
+4. Add a Kubernetes Secret holding your Anthropic API key.
+
+```
+export ANTHROPIC_API_KEY=
+
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-api-key
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: "Bearer ${ANTHROPIC_API_KEY}"
+EOF
+```
+
+5. Create an `EnterpriseAgentgatewayBackend` of type `ai` for Anthropic.
+
+```
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata:
+  labels:
+    app: agentgateway-route
+  name: anthropic
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: "claude-sonnet-4-6"
+  policies:
+    ai:
+      # store model internal state instead of re-tokenzing for a prompt
+      promptCaching: {}
+    auth:
+      secretRef:
+        name: anthropic-api-key
+EOF
+```
+
+6. Create the `HTTPRoute` to route by path.
+
+```
+kubectl apply -f - <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp-route
+  namespace: agentgateway-system
+  labels:
+    app: github-mcp-server
+spec:
+  parentRefs:
+    - name: mcp-gateway
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /anthropic
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - name: anthropic
+          namespace: agentgateway-system
+          group: enterpriseagentgateway.solo.io
+          kind: EnterpriseAgentgatewayBackend
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      backendRefs:
+        - name: github-mcp-server
+          namespace: agentgateway-system
+          group: enterpriseagentgateway.solo.io
+          kind: EnterpriseAgentgatewayBackend
+EOF
+```
+
+### Test Connectivity
+
+Capture the IP of the gateway
+```
+export GATEWAY_IP=$(kubectl get svc mcp-gateway -n agentgateway-system -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo $GATEWAY_IP
+```
+
+**To test LLM traffic**
+
+Anthropic's Messages API requires `model`, `max_tokens`, and a `messages` array. The system prompt belongs at the top level (not inside `messages`). Do **not** set the `x-api-key` or `Authorization` header here — the gateway injects it from the `anthropic-api-key` Secret.
+
+```
+curl "http://$GATEWAY_IP:3000/anthropic" \
+  -H "content-type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "system": "You are a skilled cloud-native network engineer.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Write me a paragraph containing the best way to think about Istio Ambient Mesh"
+      }
+    ]
+  }' | jq
+```
+
+
+**To test MCP**, open MCP Inspector
+```
+npx modelcontextprotocol/inspector#0.18.0
+```
+
+Specify, within the **URL** section, the following:
+```
+http://YOUR_ALB_IP:3000/mcp
+```
+
+With progressive disclosure, On `tools/list` you should see only `get_tool` and `invoke_tool` instead of the full GitHub MCP tool set. Call `get_tool` with e.g. `{"name": "list_issues"}` to fetch a specific tool's schema, then `invoke_tool` to execute it.
 
 ## BYOK
 
@@ -64,7 +313,7 @@ metadata:
 spec:
   ai:
     provider:
-      openai: {}                                 # model taken from request
+      openai: {} # model taken from request
       # no host/port → defaults to api.openai.com:443
 ```
 
@@ -83,7 +332,7 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /v1                            # OpenAI-compatible path
+            value: /v1
       backendRefs:
         - group: gateway.agentgateway.dev
           kind: AgentgatewayBackend
@@ -105,24 +354,29 @@ spec:
   backend:
     auth:
       secretRef:
-        name: openai-api-key                     # attached to upstream call
+        name: openai-api-key
 ```
 
 **6. Copilot SDK pointed at the gateway, NOT at OpenAI:**
 
-```jsonc
-// copilot-sdk.config.json (or equivalent for your SDK language)
+```bash
+# Resolve the gateway's external IP first so the config file is ready to use.
+export GW_IP=$(kubectl get gateway byok-gateway -n agentgateway-system \
+  -o jsonpath='{.status.addresses[0].value}')
+
+cat > copilot-sdk.config.json <<EOF
 {
   "providers": {
     "openai": {
-      "baseURL": "http://<gateway-external-ip>/v1",
-      // Token the SDK presents to agentgateway — NOT the OpenAI key.
-      // Can be an internal JWT, an API key in a Secret, or omitted if mTLS.
+      "baseURL": "http://${GW_IP}/v1",
       "apiKey":  "sdk-to-gateway-token"
     }
   }
 }
+EOF
 ```
+
+The `apiKey` here is what the SDK presents to **agentgateway** — not the OpenAI key. It can be an internal JWT, an API key stored in a `Secret`, or omitted entirely if you're using mTLS between the SDK and the gateway.
 
 **7. Smoke test (curl, no SDK needed):**
 
@@ -151,205 +405,219 @@ The downstream service (a tool, an MCP server, an API) can then enforce policy o
 
 ### OBO Flow
 
-Two flavors of OBO show up in this stack — they differ in *who mints the OBO token*, but agentgateway sees the same shape on the wire.
-
-**Flavor 1 — GitHub Copilot (real OAuth OBO):** the GitHub Copilot SDK obtains a delegated token via GitHub's OAuth token endpoint (or an enterprise IdP configured for it). The token's `act` claim identifies Copilot; `sub` identifies the GitHub user. Standards-track RFC 8693 token exchange.
-
-**Flavor 2 — kagent-enterprise (self-minted OBO JWT):** kagent's middleware (`middleware/pkg/oidc/obo.go`) signs an OBO JWT with its own RSA key when forwarding a user request to a downstream agent or MCP server. kagent publishes the public key at `/jwks.json` for verifiers. Not RFC 8693 — kagent is acting as a mini IdP for its own agents.
-
-In both cases the downstream call that hits agentgateway has the same observable property: a JWT whose `sub` is the user and `act.sub` is the agent. agentgateway's CEL RBAC sees both and gates per-tool access accordingly.
+The canonical pattern in this stack is **IdP-driven OBO**: kagent passes the user's raw OIDC/IdP access token through to agentgateway, and **agentgateway's STS performs the token exchange against the IdP** before forwarding to the downstream backend. kagent does not mint OBO tokens itself in this configuration (`SKIP_OBO=true`); the IdP is the sole minter of identity and the STS is the sole exchanger.
 
 ```
-┌──────────┐                                                  ┌────────────────┐
-│  User    │  user JWT (sub=alice)                            │   IdP / kagent │
-│ (Alice)  │ ───────────────────────────────────────────────▶ │   (token mint) │
-└──────────┘                                                  └────────┬───────┘
-                                                                       │ OBO JWT:
-                                                                       │   sub  = alice
-                                                                       │   act  = { sub: <agent> }
-                                                                       ▼
-                                                              ┌────────────────┐
-                                                              │     Agent      │
-                                                              │  (Copilot or   │
-                                                              │   kagent agent)│
-                                                              └────────┬───────┘
-                                                                       │ OBO JWT in Authorization
-                                                                       ▼
-                                                              ┌────────────────┐
-                                                              │  agentgateway  │
-                                                              │  - validates   │
-                                                              │  - CEL on sub  │
-                                                              │  - CEL on act  │
-                                                              └────────┬───────┘
-                                                                       │ (forwarded to MCP/tool/API)
-                                                                       ▼
-                                                              ┌────────────────┐
-                                                              │   MCP server   │
-                                                              │   / HTTP API   │
-                                                              └────────────────┘
+┌──────────┐  1. Login (OIDC PKCE)        ┌────────────────┐
+│  User    │ ───────────────────────────▶ │     IdP        │
+│ (Alice)  │ ◀─────────────────────────── │ (Entra today)  │
+└────┬─────┘  user access token (sub=alice)└────────────────┘
+     │
+     │  2. user token in Authorization
+     ▼
+┌────────────────┐
+│   kagent UI    │  SKIP_OBO=true → forwards raw user token
+│   + runtime    │
+└────────┬───────┘
+         │  3. user token in Authorization
+         │     (KAGENT_PROPAGATE_TOKEN=true on the Agent)
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       agentgateway                          │
+│                                                             │
+│  dataplane ──── STS_URI ────▶  STS (port 7777)              │
+│    │                              │                         │
+│    │                              │  4. POST /token         │
+│    │                              │     (grant_type=        │
+│    │                              │      jwt-bearer)        │
+│    │                              ▼                         │
+│    │                          ┌────────┐                    │
+│    │                          │  IdP   │  5. exchanged      │
+│    │                          │ /token │     token scoped   │
+│    │                          └────────┘     to downstream  │
+│    │                              │                         │
+│    │     ◀──────────────────────  │                         │
+│    │   exchanged token (sub=user, aud=downstream client)    │
+│    │                                                        │
+└────┼────────────────────────────────────────────────────────┘
+     │  6. exchanged token in Authorization
+     ▼
+┌────────────────┐    7. provider-native auth (API key)
+│ llm-obo-proxy  │ ──────────────────────────▶  Anthropic / OpenAI
+│  (validates    │
+│  exchanged     │
+│  token)        │
+└────────────────┘
 ```
 
-The agentgateway-side code lives at `crates/agentgateway/src/http/jwt.rs` (JWT validation), `crates/agentgateway/src/mcp/rbac.rs` (per-tool authorization), and `ent-controller/internal/tokenexchange/` (the STS implementation if you want agentgateway itself to perform a token exchange step before forwarding).
+**Key properties to point at on stage:**
 
-### OBO Flow demo — kagent flavor
+- kagent never mints its own JWT in this topology. The IdP's token flows untouched through kagent and through the agent.
+- The STS lives inside the agentgateway controller pod (`enterprise-agentgateway` Deployment, port 7777). The dataplane pod calls it via `STS_URI` injected from `EnterpriseAgentgatewayParameters`.
+- The exchange call is **agentgateway → IdP /token endpoint**, not agentgateway → some internal mint. For Entra it's `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` (Microsoft's flavor); for an RFC 8693-compliant IdP it's `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`.
+- The exchanged token is what the downstream backend validates. The proxy validates the IdP-issued exchanged token, not anything agentgateway issued itself. In some cases, it may be a k8s Service because due to some changes with LLM providers (e.g - Anthropic), they don't want you using "third-party", so the request gets blocked on the LLM providers end.
 
-This is the easier flavor to demo locally because kagent-enterprise is already installed and mints OBO tokens automatically. The goal: see an OBO JWT in flight, decode it, and verify agentgateway is enforcing claims from it.
 
-**1. Enable OBO in kagent (ConfigMap):**
+### OBO Flow demo: kagent + Entra
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kagent-config
-  namespace: kagent
-data:
-  # OBO is on by default; this is the explicit form.
-  SKIP_OBO: "false"
-  # Comma-separated extra claims to propagate from the user's OIDC token
-  # into the OBO token (in addition to the standard sub/act/iss/aud/exp).
-  OBO_CLAIMS_TO_PROPAGATE: "email,groups,preferred_username"
-```
+kagent + entra for OBO flow. If you're using another OIDC/iDP provider, please note that the overall concepts are the same. Its just a matter of having a different issuer.
 
-**2. Verify kagent's JWKS endpoint is serving keys:**
+To configure OBO, you can use the following as an example if you want to use Entra: https://github.com/AdminTurnedDevOps/agentic-demo-repo/blob/main/kagent-enterprise/obo/setup.md
+
+#### What's wired up right now
+
+If you followed the Entra guide above in the **OBO Flow Demo: kagent + Entra** section, your "state of the world" will look like the below:
 
 ```bash
-kubectl port-forward -n kagent svc/kagent 8080:8080 >/dev/null 2>&1 &
-curl -sS http://localhost:8080/jwks.json | jq .
-# Expect: { "keys": [ { "kty": "RSA", "kid": "...", "n": "...", "e": "AQAB", ... } ] }
+# 1. kagent is configured with Entra OIDC and SKIP_OBO=true
+kubectl get configmap kagent-enterprise-config -n kagent -o yaml \
+  | grep -E "OIDC_ISSUER|OIDC_CLIENT_ID|OBO_CLAIMS_TO_PROPAGATE|SKIP_OBO"
+
+# Expected:
+#   OIDC_ISSUER:             https://login.microsoftonline.com/<TENANT_ID>/v2.0
+#   OIDC_CLIENT_ID:          <KAGENT_BACKEND_CLIENT_ID>
+#   OBO_CLAIMS_TO_PROPAGATE: email,groups,oid,tid,upn
+#   SKIP_OBO:                "true"
+
+# 2. The demo agent has KAGENT_PROPAGATE_TOKEN=true
+kubectl get deploy obo-demo-agent -n kagent \
+  -o jsonpath='{range .spec.template.spec.containers[*].env[?(@.name=="KAGENT_PROPAGATE_TOKEN")]}{.name}={.value}{"\n"}{end}'
+# KAGENT_PROPAGATE_TOKEN=true
+
+# 3. The agentgateway STS is configured with Entra as the subject validator,
+#    and the dataplane has STS_URI/STS_AUTH_TOKEN injected.
+kubectl get enterpriseagentgatewayparameters agentgateway-entra-testing-enterprise \
+  -n agentgateway-system -o jsonpath='{.spec.env}' | jq .
+# [
+#   { "name": "STS_URI",        "value": "http://enterprise-agentgateway.agentgateway-system.svc.cluster.local:7777/token" },
+#   { "name": "STS_AUTH_TOKEN", "value": "/var/run/secrets/xds-tokens/xds-token" }
+# ]
+
+# 4. The per-backend OBO exchange policy targets the llm-obo-proxy Service.
+kubectl get enterpriseagentgatewaypolicy entra-obo-token-exchange \
+  -n agentgateway-system -o yaml | sed -n '/spec:/,/status:/p'
+# spec:
+#   backend:
+#     tokenExchange:
+#       entra:
+#         tenantId:  <TENANT_ID>
+#         clientId:  <KAGENT_BACKEND_CLIENT_ID>
+#         scope:     api://<KAGENT_BACKEND_CLIENT_ID>/kagent-backend
+#         clientSecretRef: { key: client_secret, name: entra-obo-client-secret }
+#       mode: ExchangeOnly
+#   targetRefs:
+#     - { group: "", kind: Service, name: llm-obo-proxy }
 ```
 
-This is the URL agentgateway will fetch to validate kagent-minted OBO tokens.
+These four resources are the whole OBO control surface. Everything else (Gateway, HTTPRoute, llm-obo-proxy Deployment) is plain Kubernetes plumbing.
 
-**3. Capture an OBO token mid-flight:**
+#### Evidence the chain is working
 
-The easiest way is to attach a debug echo backend that just dumps the request headers. Drop this in a scratch namespace:
+After driving a request through the kagent UI to the `obo-demo-agent`, you can confirm each hop:
+
+```bash
+kubectl logs deployment/enterprise-agentgateway -n agentgateway-system \
+  | grep '"path":"/token"' | tail -5
+# {"…","method":"POST","path":"/token","status_code":200,…}
+
+kubectl logs deployment/llm-obo-proxy -n agentgateway-system \
+  | grep -v healthz | tail -6
+# INFO:llm-obo-proxy:validated token for oid=<USER_OID> aud=<KAGENT_BACKEND_CLIENT_ID> scp=kagent-backend
+# INFO:httpx:HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+```
+
+What this tells you concretely:
+
+- **`oid=<USER_OID>`**: The human user's Entra object ID is present in the token the proxy validates. The user's identity made it all the way to the downstream proxy.
+- **`aud=<KAGENT_BACKEND_CLIENT_ID>` + `scp=kagent-backend`**: This is an **Entra-issued** token, scoped to the `kagent-backend` app registration. agentgateway did call Entra's `/token` endpoint and received back a fresh, audience-restricted token. The proxy refuses to accept tokens with the wrong audience.
+- **The next log line is `POST https://api.anthropic.com/v1/messages 200`**: Only after the OBO token validates does the proxy call Anthropic with the provider API key. No identity, no call.
+
+#### The four CRDs that make this work
+
+(Full YAML in `setup.md` via the **OBO Flow Demo: kagent + Entra** section; these are the headline shapes.)
+
+**a. Helm values for the agentgateway controller — turns on the STS:**
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata: { name: echo, namespace: demo-ns }
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: echo } }
-  template:
-    metadata: { labels: { app: echo } }
-    spec:
-      containers:
-        - name: echo
-          image: mendhak/http-https-echo:34
-          ports: [{ containerPort: 8080 }]
----
-apiVersion: v1
-kind: Service
-metadata: { name: echo, namespace: demo-ns }
-spec:
-  selector: { app: echo }
-  ports: [{ port: 80, targetPort: 8080 }]
+tokenExchange:
+  enabled: true
+  issuer: "http://enterprise-agentgateway.agentgateway-system.svc.cluster.local:7777"
+  subjectValidator:
+    validatorType: "remote"
+    remoteConfig:
+      url: "https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys"
+  apiValidator:   { validatorType: "k8s" }
+  actorValidator: { validatorType: "k8s" }
 ```
 
-Then make any request that flows through kagent → echo and look at the `Authorization` header on the echo side. That's your OBO JWT.
-
-**4. What an OBO JWT from kagent looks like (decoded):**
-
-```jsonc
-// Header
-{ "alg": "RS256", "kid": "kagent-2026-05-key-1", "typ": "JWT" }
-
-// Payload
-{
-  "iss":  "kagent.kagent",                                          // kagent's issuer
-  "sub":  "alice@example.com",                                      // the human user
-  "aud":  "demo-ns",                                                // downstream audience
-  "act":  {
-    "sub": "system:serviceaccount:demo-ns:research-agent"           // THE AGENT
-  },
-  "iat":  1748448000,
-  "nbf":  1748448000,
-  "exp":  1748534400,                                               // 24h default
-  "email":          "alice@example.com",                            // propagated claim
-  "groups":         ["dev","platform"],                             // propagated claim
-  "preferred_username": "alice"                                     // propagated claim
-}
-```
-
-Paste it into `jwt.io` to verify the signature against the JWKS from step 2.
-
-**5. agentgateway side — validate the OBO JWT:**
+**b. `EnterpriseAgentgatewayParameters` — passes STS endpoint to the dataplane:**
 
 ```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: kagent-obo-jwt-auth
-  namespace: agentgateway-system
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayParameters
+metadata: { name: agentgateway-entra-testing-enterprise, namespace: agentgateway-system }
+spec:
+  env:
+    - { name: STS_URI,        value: "http://enterprise-agentgateway.agentgateway-system.svc.cluster.local:7777/token" }
+    - { name: STS_AUTH_TOKEN, value: "/var/run/secrets/xds-tokens/xds-token" }
+```
+
+The `Gateway` references this via `spec.infrastructure.parametersRef`.
+
+**c. `EnterpriseAgentgatewayPolicy` — declares "do an Entra OBO exchange before calling this backend":**
+
+```yaml
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata: { name: entra-obo-token-exchange, namespace: agentgateway-system }
 spec:
   targetRefs:
-    - kind: EnterpriseAgentgatewayBackend
-      name: docs-mcp                    # any backend you want OBO-gated
-  traffic:
-    jwtAuthentication:
-      mode: Strict
-      providers:
-        - issuer: "kagent.kagent"
-          audiences: ["demo-ns"]
-          jwks:
-            url: "http://kagent.kagent.svc.cluster.local:8080/jwks.json"
-            cacheDuration: 5m
+    - { kind: Service, name: llm-obo-proxy, group: "" }
+  backend:
+    tokenExchange:
+      mode: ExchangeOnly
+      entra:
+        tenantId: "${TENANT_ID}"
+        clientId: "${KAGENT_BACKEND_CLIENT_ID}"
+        scope:    "api://${KAGENT_BACKEND_CLIENT_ID}/kagent-backend"
+        clientSecretRef: { name: entra-obo-client-secret, key: client_secret }
 ```
 
-Once this is applied, any request to that backend without a valid kagent OBO JWT is rejected at the gateway. With it, `jwt.sub` and `jwt.act.sub` are in scope for every downstream CEL rule (see the "OBO Agent/tool isolation for MCP" section below for the per-tool RBAC layer).
+This is the field that triggers the agentgateway → Entra `/token` call. **It is Entra-specific** — see "Adapting to Keycloak" below.
 
-### OBO Flow demo — Copilot flavor (sketch)
-
-Real Copilot OBO requires an enterprise IdP wired into the GitHub Copilot Enterprise tenant. The agentgateway-side YAML is structurally identical to the kagent flavor — only `issuer`, `audiences`, and `jwks.url` change:
+**d. The kagent `Agent` — `KAGENT_PROPAGATE_TOKEN=true`:**
 
 ```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: copilot-obo-jwt-auth
-  namespace: agentgateway-system
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata: { name: obo-demo-agent, namespace: kagent }
 spec:
-  targetRefs:
-    - kind: EnterpriseAgentgatewayBackend
-      name: docs-mcp
-  traffic:
-    jwtAuthentication:
-      mode: Strict
-      providers:
-        - issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"   # or your IdP
-          audiences: ["api://copilot-downstream"]                        # what your IdP sets
-          jwks:
-            url: "https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys"
-            cacheDuration: 5m
+  type: Declarative
+  declarative:
+    modelConfig: anthropic-model-config         # baseUrl points at agentgateway /llm route
+    deployment:
+      env:
+        - { name: KAGENT_PROPAGATE_TOKEN, value: "true" }
 ```
 
-The decoded Copilot OBO token will have a comparable shape — `sub` = the GitHub/Entra user, `act.sub` = the Copilot service principal — but the exact issuer URL and claim formats depend on your IdP. Have the customer share a sample decoded token from their tenant before committing to specific `audiences` and `issuer` values.
+Without this env var, kagent will not forward the user's Entra access token to the agent, so the STS has nothing to exchange and the whole chain breaks. Demo-killer config bug; worth memorising.
 
 ### Agent Identity With OBO
 
-This also covers the customer ask: **agent isolation** — "if it's this agent identity, only allow these MCP server tools."
+"if it's this agent identity, only allow these MCP server tools."
 
 The mechanism is `backend.mcp.authorization` on an `AgentgatewayPolicy`, evaluating CEL expressions where `jwt.sub` is the user and `jwt.act.sub` is the agent. With one or more `Allow` rules present, the policy becomes **deny-by-default** — every other tool is invisible to the agent.
 
-**Copilot agent:**
-
-```yaml
-matchExpressions:
-  - 'jwt.act.sub == "github-copilot" && mcp.tool.name in ["search", "fetch_doc"]'
-```
-
-**kagent agent (note the K8s ServiceAccount format kagent's OBO middleware uses):**
+**Example:**
 
 ```yaml
 matchExpressions:
   - 'jwt.act.sub == "system:serviceaccount:demo-ns:research-agent" && mcp.tool.name in ["search", "fetch_doc"]'
 ```
 
-Same backend, same MCP server, two agents — each gets a different visible toolset. The killer feature: **`list_tools` filters per-item**, so `research-agent` doesn't even *see* the tools it can't call; it never has to attempt a forbidden call and get a 403.
+Different `act.sub` values get different visible toolsets — same backend, same MCP server, per-agent enforcement. The killer feature: **`list_tools` filters per-item**, so `research-agent` doesn't even *see* the tools it can't call; it never has to attempt a forbidden call and get a 403.
 
-### OBO Agent/tool isolation for MCP
+#### OBO Agent/tool isolation for MCP
 
 A complete, working example. Backend exposes 4 hypothetical MCP tools (`search`, `fetch_doc`, `create_doc`, `delete_doc`); policy restricts each agent to a subset based on its `act` claim.
 
@@ -445,9 +713,7 @@ CEL transformations on the `model` field run **before** the upstream LLM call. T
 - `llm.prompt` — the parsed prompt content, **only** if prompt-capture is enabled elsewhere (prompt guard, logging); otherwise `None`
 - JWT claims — `jwt.sub`, `jwt.act.sub`, `jwt.claims.*` — present whenever JWT auth runs first
 
-**Important: `llm.inputTokens` is NOT populated at request time.** Token counts are computed downstream of the transformation step. Don't write rules like `llm.inputTokens > 8000 ? ...` — they evaluate against zero/unset and the demo will silently route everything to the cheap branch. Use `size(request.body)` as a coarse proxy if you need a "big prompt → big model" rule, or have the caller send a hint header.
 
-(Verified in `crates/agentgateway/src/proxy/httpproxy.rs:300` — transformations run before `llm/mod.rs:887` where LLMInfo with token counts is created.)
 
 ### Example — testable intent routing
 
@@ -498,22 +764,11 @@ spec:
           : "gpt-4o-mini"
 ```
 
-### What you can demo with this
-
+Outcome:
 1. **Same client request, different model.** Two `curl`s to the same endpoint with the same body, differing only in `x-user-tier: premium` → response model differs. Show the model name in the response.
 2. **Agent identity drives routing.** Same user, two agents in OBO flow → research-agent gets the cheap model, writer-agent gets the strong one. Token cost difference visible in logs/metrics.
 3. **Payload size flip.** Short prompt → cheap model. Long prompt (paste a wall of text) → strong model.
 4. **Aliases hide the providers.** Client only ever sees `default`, `smart`, `local`. Swap the underlying concrete models in the YAML — no client change.
-
-### What this is NOT
-
-This is *rule-based* routing — fast, deterministic, no extra LLM call. It is **not** semantic intent classification ("the prompt is about code → use a code model"). agentgateway has no built-in classifier or embeddings router. If the customer needs that, the pattern is:
-
-- Add a "router model" first hop (a small fast model that classifies and returns the target model name)
-- Have the caller include a classification header (`x-intent: code-gen` / `x-intent: summarization`) decided client-side
-- Or use the `Detect` route type to capture metadata and route via an external decision service
-
-For most "hide model selection from users" asks, header + JWT + size-based rules cover 80% of the value without that complexity.
 
 
 
