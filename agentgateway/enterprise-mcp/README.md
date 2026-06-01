@@ -1299,6 +1299,7 @@ Once the RBAC policy below is applied, this returns **43 of the 46 tools**. The 
 ##### The RBAC policy: CEL gates `mcp.tool.name` on `X-Agent-Name`
 
 ```yaml
+kubectl apply -f - <<EOF
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayPolicy
 metadata:
@@ -1319,6 +1320,7 @@ spec:
             - 'request.headers["x-agent-name"] == "obo-readonly-agent" && (mcp.tool.name.startsWith("search_") || mcp.tool.name.startsWith("get_") || mcp.tool.name.startsWith("list_") || mcp.tool.name in ["issue_read", "pull_request_read"])'
             # Full persona — everything EXCEPT destructive/admin tools
             - 'request.headers["x-agent-name"] == "obo-demo-agent" && !(mcp.tool.name in ["merge_pull_request", "delete_file", "run_secret_scanning"])'
+EOF
 ```
 
 With at least one `Allow` rule present, the policy is deny-by-default, so any request whose `X-Agent-Name` doesn't match a rule sees zero tools and gets zero authorizations.
