@@ -882,228 +882,203 @@ X-Agent-Name=(none)              →  0 tools
 
 ## Intent-Based Routing
 
-Intent-based routing lets agentgateway decide *which* LLM model serves a given request — based on the user, the agent, the prompt size, or the workload type — without the caller having to choose. The Copilot SDK (or kagent agent) requests a stable model name like `"default"`, and agentgateway resolves it to a concrete model per request.
+Intent-based routing lets agentgateway decide *which* LLM model serves a given request based on the user, the agent, the prompt size, or the workload type without the caller having to choose. The Copilot SDK (or kagent agent) requests a stable model name like `"default"`, and agentgateway resolves it to a concrete model per request.
 
-### What's available at request transformation time (verified)
+### What's available at request transformation time
 
 CEL transformations on the `model` field run **before** the upstream LLM call. The CEL context at that point includes:
 
-- `llm.requestModel` — what the client asked for
-- `llm.provider` — the resolved provider
-- `request.headers[...]` — any client-provided header
-- `request.body` — the raw request body (use `size(request.body)` for payload-size estimation)
-- `llm.prompt` — the parsed prompt content, **only** if prompt-capture is enabled elsewhere (prompt guard, logging); otherwise `None`
-- JWT claims — `jwt.sub`, `jwt.aud`, `jwt.azp`, `jwt.claims.*` — present whenever JWT auth runs first. **Note:** in the running Entra OBO setup the token has no `act` claim; agent identity is conveyed via `X-Agent-Name` header instead (see the OBO MCP isolation section)
+- `llm.requestModel`: what the client asked for
+- `llm.provider`: the resolved provider
+- `request.headers[...]`: any client-provided header
+- `request.body`: the raw request body (use `size(request.body)` for payload-size estimation)
+- `llm.prompt`: the parsed prompt content, **only** if prompt-capture is enabled elsewhere (prompt guard, logging); otherwise `None`
+- JWT claims: `jwt.sub`, `jwt.aud`, `jwt.azp`, `jwt.claims.*` — present whenever JWT auth runs first. **Note:** in the running Entra OBO setup the token has no `act` claim; agent identity is conveyed via `X-Agent-Name` header instead (see the OBO MCP isolation section)
 
+### Where aliases and transformations live
 
+In the Enterprise CRD set (`enterpriseagentgateway.solo.io/v1alpha1`), `modelAliases` and `transformations` are configured **on the Backend** under `spec.policies.ai`, not on a separate `Policy` object. The Backend already declares its provider, so co-locating the routing logic keeps the alias map next to the upstream it resolves to.
 
-### Example — testable intent routing
+The two AI backends already running on `mcp-gateway` in this cluster are:
 
-```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: copilot-intent-routing
-  namespace: agentgateway-system
-spec:
-  targetRefs:
-    - kind: AgentgatewayBackend
-      name: llm-backend
-  ai:
-    # 1. Friendly model aliases — clients ask for these stable names.
-    modelAliases:
-      default: gpt-4o-mini
-      smart: claude-sonnet-4-6
-      local: qwen2.5-1.5b-instruct
+| Backend (`enterpriseagentgateway.solo.io`) | Upstream | Route on `mcp-gateway:3000` |
+|---|---|---|
+| `anthropic`     | Anthropic API (`claude-sonnet-4-6`)                    | `/anthropic` |
+| `ollama-local`  | Ollama in-cluster (`llama3.2:1b`, `llm-selfhosted` ns) | `/local`     |
 
-    # 2. Dynamic per-request routing. Transformations OVERWRITE the model field
-    #    after aliases are resolved, so anything decided here is final.
-    transformations:
-      - field: model
-        expression: >
-          // Tier-based: premium users always get the strong model.
-          request.headers["x-user-tier"] == "premium"
-            ? "claude-sonnet-4-6"
+### Setup For Local + Public Models
 
-          // Agent-based: the read-only agent gets the cheap model;
-          // the full-access agent (generation-heavy) gets the strong one.
-          // Uses the same X-Agent-Name header as the OBO MCP isolation demo.
-          : request.headers["x-agent-name"] == "obo-demo-agent"
-            ? "claude-sonnet-4-6"
-          : request.headers["x-agent-name"] == "obo-readonly-agent"
-            ? "gpt-4o-mini"
+This patches the existing `anthropic` backend (the "default" upstream) with model aliases and a single-rule transformation. The transformation only rewrites `model` to a concrete value; whether the request lands on Anthropic vs. Ollama is decided by the route (`/anthropic` vs `/local`) the SDK chose. The bigger "one endpoint, many upstreams" pattern is covered in the next section using `spec.ai.groups`.
 
-          // Size-based: large requests route to the high-context model.
-          // size(request.body) is in BYTES, not tokens — calibrate per workload.
-          : size(request.body) > 20000
-            ? "claude-sonnet-4-6"
+Translation: If model is empty OR model == "default" → rewrite the model string to "claude-sonnet-4-6"; Else → leave the model string as whatever the client sent.
 
-          // Internal self-hosted route for low-stakes requests from the
-          // "automation" header (e.g. CI / scheduled tasks).
-          : request.headers["x-workload"] == "automation"
-            ? "qwen2.5-1.5b-instruct"
+In this case, the "default" model is defined in:
 
-          // Default fallback.
-          : "gpt-4o-mini"
+```
+modelAliases:
+  default: claude-sonnet-4-6
+  local:   llama3.2:1b
 ```
 
-Outcome:
-1. **Same client request, different model.** Two `curl`s to the same endpoint with the same body, differing only in `x-user-tier: premium` → response model differs. Show the model name in the response.
-2. **Agent identity drives routing.** Same user, two agents in OBO flow → `obo-readonly-agent` gets the cheap model, `obo-demo-agent` gets the strong one. Token cost difference visible in logs/metrics.
-3. **Payload size flip.** Short prompt → cheap model. Long prompt (paste a wall of text) → strong model.
-4. **Aliases hide the providers.** Client only ever sees `default`, `smart`, `local`. Swap the underlying concrete models in the YAML — no client change.
+```yaml
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata:
+  name: anthropic
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: "claude-sonnet-4-6"
+  policies:
+    ai:
+      promptCaching: {}
+      # Friendly aliases — clients ask for these stable names instead of
+      # provider-specific SKUs. "default" maps to the cloud model; "local"
+      # maps to the on-prem Llama (used on the /local route).
+      modelAliases:
+        default: claude-sonnet-4-6
+        local:   llama3.2:1b
 
+      # Single CEL transformation: any request whose model field is empty
+      # or the literal string "default" gets resolved to the alias target.
+      # The Copilot SDK can ask for "default" and never know the concrete model.
+      transformations:
+        - field: model
+          expression: >
+            llm.requestModel == "" || llm.requestModel == "default"
+              ? "claude-sonnet-4-6"
+              : llm.requestModel
+    auth:
+      secretRef:
+        name: anthropic-api-key
+EOF
+```
+
+Apply and test:
+
+Same gateway, different route → in-cluster Llama. The /local route hits the ollama-local backend, which pins model: llama3.2:1b on the provider.
+
+When you use the `curl` below, you see that the model is "default".
+
+```bash
+export GATEWAY_IP=$(kubectl get svc mcp-gateway -n agentgateway-system \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+# Client asks for the alias — gateway resolves to claude-sonnet-4-6.
+curl -sS "http://$GATEWAY_IP:3000/anthropic" \
+  -H "content-type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "default",
+    "system": "Be brief.",
+    "messages": [{"role":"user","content":"Name one Istio CRD."}]
+  }' | jq '.model, .content[0].text'
+
+curl -sS "http://$GATEWAY_IP:3000/local" \
+  -H "content-type: application/json" \
+  -d '{
+    "messages":[{"role":"user","content":"Name one Istio CRD."}]
+  }' | jq '.model, .choices[0].message.content'
+```
+
+You'll see an output like the below specifying Llama was used (notice the `null` output):
+```
+"claude-sonnet-4-6"
+null
+"llama3.2:1b"
+"One Istio Control Plane Resource Directory (CRD) is \"resource\"."
+```
+
+### Reverting the patch
+
+The realistic example above modifies the **live `anthropic` backend** that the OBO demo agents (`obo-demo-agent`, `obo-readonly-agent`) and the kagent `anthropic-model-config` route through. The patch is additive — existing traffic with a valid Claude model name still resolves correctly — but if you need to roll back to the pre-Intent-Routing state (for a clean demo run, or because a downstream consumer broke), re-apply the original backend spec:
+
+```
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata:
+  labels:
+    app: agentgateway-route
+  name: anthropic
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: "claude-sonnet-4-6"
+  policies:
+    ai:
+      # store model internal state instead of re-tokenzing for a prompt
+      promptCaching: {}
+    auth:
+      secretRef:
+        name: anthropic-api-key
+EOF
+```
+
+Test to ensure everything is working as expected:
+```
+export GATEWAY_IP=$(kubectl get svc mcp-gateway -n agentgateway-system \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+curl -sS "http://$GATEWAY_IP:3000/anthropic" \
+  -H "content-type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Say hi in 5 words."}]}' \
+  | jq '.model, .choices[0].message.content'
+```
 
 
 ## Routing From GitHub Copilot through agw
 
-This section is the LLM-side companion to BYOK. When the Copilot SDK is pointed at agentgateway (instead of directly at OpenAI/Anthropic), agentgateway becomes responsible for picking the upstream model and provider on every request. The customer wants two flavors served from a single endpoint:
+This section is the LLM-side companion to BYOK. When the Copilot SDK is pointed at agentgateway instead of directly at Anthropic, agentgateway becomes the OpenAI-compatible endpoint the SDK talks to, and the upstream provider credential never leaves the cluster.
 
-- **Public models** — OpenAI, Anthropic, Azure OpenAI, Bedrock, etc.
-- **Self-hosted models** — vLLM, TGI, or any OpenAI-compatible local inference server.
+The setup uses the `anthropic` `EnterpriseAgentgatewayBackend` already deployed in the cluster (created in the **MCP Tool Selection** section) and the `/anthropic` route on `mcp-gateway`. Nothing new to apply as this is purely how Copilot consumes what's already running.
 
-The `AIBackend` type supports both, in priority groups, with automatic failover. The cluster already has `vllm-gpt-oss-20b` and `vllm-qwen25-15b-instruct` deployed as InferencePools — they're the self-hosted side of this example.
+### The live backend and route
 
-### Public models — single backend fronting multiple providers
+The Copilot SDK consumes the `anthropic` `EnterpriseAgentgatewayBackend` created back in the **MCP Tool Selection** section. To see the live spec on your cluster:
 
-```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
-metadata:
-  name: llm-public
-  namespace: agentgateway-system
-spec:
-  ai:
-    groups:
-      # Primary group — OpenAI is the default upstream.
-      - providers:
-          - name: openai-primary
-            openai: {}                              # model taken from request
-            policies:
-              auth:
-                secretRef:
-                  name: openai-api-key              # holds OPENAI_API_KEY
-          - name: anthropic-primary
-            anthropic: {}
-            policies:
-              auth:
-                secretRef:
-                  name: anthropic-api-key
-      # Failover group — Azure OpenAI same models, different region.
-      - providers:
-          - name: azure-failover
-            azureopenai:
-              endpoint: ai-gateway-failover.openai.azure.com
-              apiVersion: "2024-02-15-preview"
-              deploymentName: gpt-4o-mini
-            policies:
-              auth:
-                secretRef:
-                  name: azure-openai-key
+```bash
+kubectl get enterpriseagentgatewaybackend anthropic -n agentgateway-system -o yaml
 ```
 
-Provider selection within a group is health-weighted (`select_provider()` samples two endpoints, picks higher health). On consecutive failures, the group is evicted and the next priority group takes traffic. The client sees one stable endpoint.
+The shape that matters for BYOK: `spec.policies.auth.secretRef.name` points at the `anthropic-api-key` Secret — **that Secret is the only place the upstream API key exists**. The Copilot SDK never sees it.
 
-### Self-hosted models — vLLM via OpenAI-compatible API
+### Pointing the Copilot SDK at the gateway
 
-vLLM exposes an OpenAI-compatible `/v1/chat/completions`, so the `openai` provider type works with a custom `host`:
+The GitHub Copilot CLI (and the underlying SDK) supports BYOK via environment variables. Set the provider base URL to the `/anthropic` route on `mcp-gateway`, declare the provider type as `openai` (because the gateway exposes an OpenAI-compatible wire format on this route — see the `URLRewrite` filter above), and run any prompt.
 
-```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
-metadata:
-  name: llm-selfhosted
-  namespace: agentgateway-system
-spec:
-  ai:
-    groups:
-      - providers:
-          - name: vllm-qwen
-            openai:
-              model: qwen2.5-1.5b-instruct          # pin to the served model
-            host: vllm-qwen25-15b-instruct.default.svc.cluster.local
-            port: 8000
-            # No auth — in-cluster service, no API key.
-          - name: vllm-gpt-oss
-            openai:
-              model: gpt-oss-20b
-            host: vllm-gpt-oss-20b.default.svc.cluster.local
-            port: 8000
+Watch the Gateway logs
+```
+kubectl logs mcp-gateway-6c99fc8d55-z75dx -n agentgateway-system -f
 ```
 
-### Combined — one backend that does both
-
-A single backend can mix public and self-hosted in priority groups. Pattern: self-hosted first for low-stakes / data-sensitive workloads, public as failover:
-
-```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
-metadata:
-  name: llm-backend
-  namespace: agentgateway-system
-spec:
-  ai:
-    groups:
-      # Group 0 — try self-hosted first (cheap, private, no per-token cost).
-      - providers:
-          - name: vllm-qwen
-            openai:
-              model: qwen2.5-1.5b-instruct
-            host: vllm-qwen25-15b-instruct.default.svc.cluster.local
-            port: 8000
-      # Group 1 — fall back to public when self-hosted is degraded or evicted.
-      - providers:
-          - name: openai-public
-            openai: {}
-            policies:
-              auth:
-                secretRef:
-                  name: openai-api-key
----
-# Layer the aliases + transformations from "Intent-Based Routing" on top.
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: llm-routing
-  namespace: agentgateway-system
-spec:
-  targetRefs:
-    - kind: AgentgatewayBackend
-      name: llm-backend
-  ai:
-    modelAliases:
-      default: qwen2.5-1.5b-instruct
-      smart: gpt-4o
-      local: qwen2.5-1.5b-instruct
-    transformations:
-      - field: model
-        expression: >
-          request.headers["x-user-tier"] == "premium"
-            ? "gpt-4o"
-          : request.headers["x-workload"] == "automation"
-            ? "qwen2.5-1.5b-instruct"
-          : "qwen2.5-1.5b-instruct"
+```bash
+export GATEWAY_IP=$(kubectl get svc mcp-gateway -n agentgateway-system \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 ```
 
-### Pointing GitHub Copilot at this backend
-
-In the Copilot SDK's BYOK provider configuration, set the OpenAI-compatible `baseURL` to the agentgateway listener:
-
-```
-baseURL: https://<gateway-external-ip>/v1
-apiKey:  <internal-token-or-mTLS>     # what the SDK presents to agentgateway, NOT the upstream key
+```bash
+COPILOT_PROVIDER_BASE_URL="http://${GATEWAY_IP}:3000/anthropic" \
+COPILOT_PROVIDER_TYPE=openai \
+COPILOT_PROVIDER_API_KEY=ignored-by-gateway \
+COPILOT_MODEL=claude-sonnet-4-6 \
 ```
 
-The SDK now uses agentgateway as an OpenAI-compatible endpoint. Underneath, agentgateway:
+```
+copilot -p "Say HELLO." --allow-all
+```
 
-1. Authenticates the request (JWT / API key / mTLS, per the `traffic.jwtAuthentication` or auth policy).
-2. Resolves `modelAliases` and applies `transformations` to pick the concrete model.
-3. Selects a healthy provider from the priority groups, attaching the upstream's API key from the referenced `Secret`.
-4. Forwards the request, normalizes the response if needed (Completions ↔ Messages format), and returns.
+Expected output (the model responds; the CLI also prints token counts and duration):
 
-### What this story sells
+```
+HELLO! 👋 How can I help you today?
 
-- **One Copilot config, all models.** Public + self-hosted under one endpoint. No SDK redeploy when you add Bedrock.
-- **Data residency on demand.** Default to self-hosted; only fail over to public when local is down.
-- **Cost control.** Self-hosted handles the volume; expensive public models handle premium / overflow traffic.
-- **Compliance traceability.** Every request through the gateway is logged with user (`jwt.oid` / `jwt.preferred_username`), agent (`X-Agent-Name`), chosen model, provider, token counts.
+Changes    +0 -0
+Duration   5s
+Tokens     ↑ 31.6k • ↓ 73
+```
