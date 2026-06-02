@@ -881,6 +881,32 @@ X-Agent-Name=obo-demo-agent      → 43 tools
 X-Agent-Name=(none)              →  0 tools
 ```
 
+Cleanup:
+```
+kubectl delete -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: github-mcp-rbac
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
+      name: github-mcp-server
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+            # Read-only persona — search/get/list + dedicated *_read tools
+            - 'request.headers["x-agent-name"] == "obo-readonly-agent" && (mcp.tool.name.startsWith("search_") || mcp.tool.name.startsWith("get_") || mcp.tool.name.startsWith("list_") || mcp.tool.name in ["issue_read", "pull_request_read"])'
+            # Full persona — everything EXCEPT destructive/admin tools
+            - 'request.headers["x-agent-name"] == "obo-demo-agent" && !(mcp.tool.name in ["merge_pull_request", "delete_file", "run_secret_scanning"])'
+EOF
+```
+
 ## Intent-Based Routing
 
 Intent-based routing lets agentgateway decide *which* LLM model serves a given request based on the user, the agent, the prompt size, or the workload type without the caller having to choose. The Copilot SDK (or kagent agent) requests a stable model name like `"default"`, and agentgateway resolves it to a concrete model per request.
