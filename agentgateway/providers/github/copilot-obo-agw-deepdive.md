@@ -432,7 +432,7 @@ kubectl logs -n agentgateway-system $DATAPLANE | grep "protocol=llm"
 On-Behalf-Of (OBO) is the pattern where an agent makes downstream calls carrying **two identities** at once:
 
 - **`sub`** — the user the agent is acting for
-- **`act`** — the agent itself (RFC 8693 §4.1)
+- **`act`** — the agent itself (RFC 8693)
 
 The downstream service (a tool, an MCP server, an API) can then enforce policy on either or both. This is what makes "agent identity" tangible — without OBO, downstream services only see the agent and lose the human, or only see the human and lose the agent.
 
