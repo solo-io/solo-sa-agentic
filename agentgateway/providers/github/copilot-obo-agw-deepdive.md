@@ -88,7 +88,7 @@ spec:
 
 If you target a different Gateway, change `spec.targetRefs[0].name`, the `service.name` resource expression, and the policy `metadata.name` to match.
 
-## MCP Tool Selection
+## Gateway Setup
 
 1. Create a gateway for the MCP server you deployed
 ```
@@ -301,10 +301,11 @@ This end-to-end demo covers the customer's OpenAI key lives in a Kubernetes `Sec
 **1. Upstream provider key as a Secret (the only place it lives):**
 
 ```bash
-export OPEANI_API_KEY=
+export OPENAI_API_KEY=sk-proj-...   # your real OpenAI key
 ```
 
-```yaml
+```bash
+kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -312,12 +313,16 @@ metadata:
   namespace: agentgateway-system
 type: Opaque
 stringData:
-  Authorization: $OPEANI_API_KEY
+  Authorization: "Bearer ${OPENAI_API_KEY}"
+EOF
 ```
+
+The value under `Authorization` is used verbatim as the upstream `Authorization` header, so the `Bearer ` prefix is required for OpenAI to accept the call.
 
 **2. Gateway listener (where the Copilot SDK connects):**
 
-```yaml
+```bash
+kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -332,13 +337,17 @@ spec:
       allowedRoutes:
         namespaces:
           from: Same
+EOF
 ```
 
-**3. AIBackend pointing at OpenAI:**
+**3. AI Backend pointing at OpenAI, with the upstream credential attached inline:**
 
-```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
+This mirrors the pattern used by the live `anthropic` backend in the **MCP Tool Selection** section — `auth.secretRef` lives on the Backend itself under `spec.policies.auth`. No separate `EnterpriseAgentgatewayPolicy` is needed for credential attachment.
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
 metadata:
   name: byok-openai
   namespace: agentgateway-system
@@ -347,11 +356,19 @@ spec:
     provider:
       openai: {} # model taken from request
       # no host/port → defaults to api.openai.com:443
+  policies:
+    auth:
+      secretRef:
+        name: openai-api-key
+EOF
 ```
 
 **4. HTTPRoute wiring the Gateway to the Backend:**
 
-```yaml
+Use the Enterprise CRD group (`enterpriseagentgateway.solo.io` / `EnterpriseAgentgatewayBackend`) in `backendRefs` to match the Backend created in step 3. Mixing the OSS group (`gateway.agentgateway.dev` / `AgentgatewayBackend`) here will produce `ResolvedRefs=False` on the HTTPRoute and 404s on requests.
+
+```bash
+kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -366,65 +383,49 @@ spec:
             type: PathPrefix
             value: /v1
       backendRefs:
-        - group: gateway.agentgateway.dev
-          kind: AgentgatewayBackend
+        - group: enterpriseagentgateway.solo.io
+          kind: EnterpriseAgentgatewayBackend
           name: byok-openai
-```
-
-**5. AgentgatewayPolicy attaching the upstream credential to the Backend:**
-
-```yaml
-apiVersion: gateway.agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: byok-openai-auth
-  namespace: agentgateway-system
-spec:
-  targetRefs:
-    - kind: AgentgatewayBackend
-      name: byok-openai
-  backend:
-    auth:
-      secretRef:
-        name: openai-api-key
-```
-
-**6. Copilot SDK pointed at the gateway, NOT at OpenAI:**
-
-```bash
-# Resolve the gateway's external IP first so the config file is ready to use.
-export GW_IP=$(kubectl get gateway byok-gateway -n agentgateway-system \
-  -o jsonpath='{.status.addresses[0].value}')
-
-cat > copilot-sdk.config.json <<EOF
-{
-  "providers": {
-    "openai": {
-      "baseURL": "http://${GW_IP}/v1",
-      "apiKey":  "sdk-to-gateway-token"
-    }
-  }
-}
+          namespace: agentgateway-system
 EOF
 ```
 
-The `apiKey` here is what the SDK presents to **agentgateway** — not the OpenAI key. It can be an internal JWT, an API key stored in a `Secret`, or omitted entirely if you're using mTLS between the SDK and the gateway.
-
-**7. Smoke test (curl, no SDK needed):**
+**5. Point the Copilot CLI at the gateway, NOT at OpenAI:**
 
 ```bash
-export GW_IP=$(kubectl get gateway byok-gateway -n agentgateway-system \
-  -o jsonpath='{.status.addresses[0].value}')
+export GW_IP=$(kubectl get svc byok-gateway -n agentgateway-system \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+COPILOT_PROVIDER_BASE_URL="http://${GW_IP}/v1" \
+COPILOT_PROVIDER_TYPE=openai \
+COPILOT_PROVIDER_API_KEY=ignored-by-gateway \
+COPILOT_MODEL=gpt-4o-mini \
+copilot -p "Say HELLO from BYOK." --allow-all
+```
+
+`COPILOT_PROVIDER_API_KEY` is what the CLI presents to **agentgateway** — not the OpenAI key. It can be an internal JWT, a shared API key the gateway is configured to accept, or any string when the listener has no auth policy (as in this demo). The real `sk-proj-…` lives only in the `openai-api-key` Secret and never touches the client environment.
+
+**6. Smoke test (curl, no CLI needed):**
+
+```bash
+export GW_IP=$(kubectl get svc byok-gateway -n agentgateway-system \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 curl -sS "http://${GW_IP}/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "gpt-4o-mini",
     "messages": [{"role":"user","content":"Say hello from BYOK."}]
-  }' | jq -r '.choices[0].message.content'
+  }' | jq -r '.model, .choices[0].message.content'
 ```
 
-If you see a normal completion, the path **Copilot SDK → agentgateway → OpenAI** is working and the SDK has zero knowledge of `sk-proj-…`.
+If you see `"gpt-4o-mini"` followed by a normal completion, the path **Copilot CLI → agentgateway → OpenAI** is working and the client has zero knowledge of `sk-proj-…`. To see the same observability attributes (`gen_ai.provider.name=openai`, `gen_ai.request.model`, token counts) that the Anthropic/Copilot demo emits, tail the dataplane:
+
+```bash
+DATAPLANE=$(kubectl get pods -n agentgateway-system \
+  -l gateway.networking.k8s.io/gateway-name=byok-gateway -o name | head -1)
+kubectl logs -n agentgateway-system $DATAPLANE | grep "protocol=llm"
+```
 
 ## OBO
 
