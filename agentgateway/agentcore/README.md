@@ -71,23 +71,23 @@ AgentGateway is hit **twice** in the full E2E flow, serving two different roles:
 # Install the AgentCore CLI: https://github.com/aws/agentcore-cli
 
 # Create a new Strands-based agent
-agentcore create --name my-agent --defaults --skip-git --skip-install --protocol HTTP --output-dir .
+agentcore create --name myagent --defaults --skip-git --skip-install --protocol HTTP --output-dir .
 
 # Install dependencies
-cd my-agent/app/my-agent && uv sync && cd -
-cd my-agent/agentcore/cdk && npm install --legacy-peer-deps && cd -
+cd myagent/app/myagent && uv sync && cd -
+cd myagent/agentcore/cdk && npm install --legacy-peer-deps && cd -
 
 # Configure the AWS target
-cat > my-agent/agentcore/aws-targets.json <<'JSON'
+cat > myagent/agentcore/aws-targets.json <<'JSON'
 [{"name": "default", "account": "<YOUR_AWS_ACCOUNT_ID>", "region": "us-west-2"}]
 JSON
 
 # Change model to Nova Lite (no use case form needed)
-# In my-agent/app/my-agent/model/load.py:
+# In myagent/app/myagent/model/load.py:
 #   return BedrockModel(model_id="us.amazon.nova-lite-v1:0")
 
 # Deploy
-eval "$(aws configure export-credentials --format env)" && AWS_REGION=us-west-2 agentcore deploy --yes
+cd myagent && eval "$(aws configure export-credentials --format env)" && AWS_REGION=us-west-2 agentcore deploy --yes
 ```
 
 ### IAM Setup
@@ -446,6 +446,6 @@ kubectl -n agentgateway-system delete agbe agentcore-backend public-mcp-backend
 ### AgentCore Runtime
 
 ```bash
-cd my-agent && eval "$(aws configure export-credentials --format env)" && \
+cd myagent && eval "$(aws configure export-credentials --format env)" && \
   AWS_REGION=us-west-2 agentcore remove all --yes
 ```
