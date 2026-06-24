@@ -1,0 +1,85 @@
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: agw-ent-agentcore-demo
+  namespace: agentgateway-system
+spec:
+  gatewayClassName: enterprise-agentgateway-oas
+  listeners:
+  - allowedRoutes:
+      namespaces:
+        from: All
+    name: http
+    port: 8080
+    protocol: HTTP
+  - allowedRoutes:
+      namespaces:
+        from: All
+    hostname: agentcore-demo.example.com
+    name: https
+    port: 443
+    protocol: HTTPS
+    tls:
+      certificateRefs:
+      - group: ""
+        kind: Secret
+        name: gateway-tls
+      mode: Terminate
+---
+# Option 1: Auth on the AGBE (spec.policies.auth.aws.assumeRole)
+# Every route pointing to this backend gets AssumeRole automatically.
+# No EAGPOL needed.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: agentcore-backend
+  namespace: agentgateway-system
+spec:
+  aws:
+    agentCore:
+      agentRuntimeArn: "arn:aws:bedrock-agentcore:us-west-2:<YOUR_AWS_ACCOUNT_ID>:runtime/<YOUR_RUNTIME_ID>"
+  policies:
+    auth:
+      aws:
+        assumeRole:
+          roleArn: arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/agentcore-invoke-role
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentcore-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agw-ent-agentcore-demo
+    namespace: agentgateway-system
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /agents/agentcore
+    backendRefs:
+    - group: agentgateway.dev
+      kind: AgentgatewayBackend
+      name: agentcore-backend
+      weight: 1
+---
+# Option 2: Auth on the EAGPOL (spec.backend.auth.aws.assumeRole)
+# Per-route scope — only routes targeted by this policy get AssumeRole.
+# Uncomment below if using this instead of spec.policies.auth on the AGBE.
+# apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+# kind: EnterpriseAgentgatewayPolicy
+# metadata:
+#   name: agentcore-auth
+#   namespace: agentgateway-system
+# spec:
+#   targetRefs:
+#   - kind: HTTPRoute
+#     name: agentcore-route
+#     group: gateway.networking.k8s.io
+#   backend:
+#     auth:
+#       aws:
+#         assumeRole:
+#           roleArn: arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/agentcore-invoke-role
