@@ -63,7 +63,13 @@ AgentGateway is hit **twice** in the full E2E flow, serving two different roles:
 
 - An EKS cluster with AgentGateway Enterprise installed
 - An AgentCore runtime deployed via the AgentCore CLI (`agentcore deploy`)
-- An IAM role for IRSA with `InvokeAgentRuntime` + `InvokeAgentRuntimeForUser` permissions
+- An IAM OIDC provider for your EKS cluster
+  - For more details on how to create this, please see the [official AWS documentation on this topic](https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html)
+- An IAM role configured for use with IRSA
+  - For more details on how to create this, please see the [official AWS documentation on this topic](https://docs.aws.amazon.com/eks/latest/userguide/associate-service-account-role.html)
+- [AWS Cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+- [node.js/npm](https://nodejs.org/en/download)
+- [uv](https://github.com/astral-sh/uv#installation)
 
 ### Create the AgentCore Runtime
 
@@ -71,23 +77,23 @@ AgentGateway is hit **twice** in the full E2E flow, serving two different roles:
 # Install the AgentCore CLI: https://github.com/aws/agentcore-cli
 
 # Create a new Strands-based agent
-agentcore create --name my-agent --defaults --skip-git --skip-install --protocol HTTP --output-dir .
+agentcore create --name myagent --defaults --skip-git --skip-install --protocol HTTP --output-dir .
 
 # Install dependencies
-cd my-agent/app/my-agent && uv sync && cd -
-cd my-agent/agentcore/cdk && npm install --legacy-peer-deps && cd -
+cd myagent/app/myagent && uv sync && cd -
+cd myagent/agentcore/cdk && npm install --legacy-peer-deps && cd -
 
 # Configure the AWS target
-cat > my-agent/agentcore/aws-targets.json <<'JSON'
+cat > myagent/agentcore/aws-targets.json <<'JSON'
 [{"name": "default", "account": "<YOUR_AWS_ACCOUNT_ID>", "region": "us-west-2"}]
 JSON
 
 # Change model to Nova Lite (no use case form needed)
-# In my-agent/app/my-agent/model/load.py:
+# In myagent/app/myagent/model/load.py:
 #   return BedrockModel(model_id="us.amazon.nova-lite-v1:0")
 
 # Deploy
-eval "$(aws configure export-credentials --format env)" && AWS_REGION=us-west-2 agentcore deploy --yes
+cd myagent && eval "$(aws configure export-credentials --format env)" && AWS_REGION=us-west-2 agentcore deploy --yes
 ```
 
 ### IAM Setup
@@ -95,6 +101,7 @@ eval "$(aws configure export-credentials --format env)" && AWS_REGION=us-west-2 
 Create an IAM policy that allows invoking the AgentCore runtime:
 
 ```json
+cat > /tmp/iam-policy.json <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -108,11 +115,16 @@ Create an IAM policy that allows invoking the AgentCore runtime:
     }
   ]
 }
+EOF
+
+aws iam create-policy --policy-name agentgateway-agentcore --policy-document file:///tmp/iam-policy.json
 ```
 
 Attach the policy to an IRSA role and annotate the AgentGateway service account:
 
 ```bash
+aws iam attach-role-policy --role-name <YOUR_IRSA_ROLE> --policy-arn=arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:policy/agentgateway-agentcore
+
 kubectl annotate sa agentgateway -n agentgateway-system \
   eks.amazonaws.com/role-arn=arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/<YOUR_IRSA_ROLE>
 
@@ -446,6 +458,6 @@ kubectl -n agentgateway-system delete agbe agentcore-backend public-mcp-backend
 ### AgentCore Runtime
 
 ```bash
-cd my-agent && eval "$(aws configure export-credentials --format env)" && \
+cd myagent && eval "$(aws configure export-credentials --format env)" && \
   AWS_REGION=us-west-2 agentcore remove all --yes
 ```
