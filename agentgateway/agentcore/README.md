@@ -63,10 +63,13 @@ AgentGateway is hit **twice** in the full E2E flow, serving two different roles:
 
 - An EKS cluster with AgentGateway Enterprise installed
 - An AgentCore runtime deployed via the AgentCore CLI (`agentcore deploy`)
-- An IAM role for IRSA with `InvokeAgentRuntime` + `InvokeAgentRuntimeForUser` permissions
+- An IAM OIDC provider for your EKS cluster
+  - For more details on how to create this, please see the [official AWS documentation on this topic](https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html)
+- An IAM role configured for use with IRSA
+  - For more details on how to create this, please see the [official AWS documentation on this topic](https://docs.aws.amazon.com/eks/latest/userguide/associate-service-account-role.html)
+- [AWS Cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
 - [node.js/npm](https://nodejs.org/en/download)
 - [uv](https://github.com/astral-sh/uv#installation)
-- [AWS Cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
 
 ### Create the AgentCore Runtime
 
@@ -98,6 +101,7 @@ cd myagent && eval "$(aws configure export-credentials --format env)" && AWS_REG
 Create an IAM policy that allows invoking the AgentCore runtime:
 
 ```json
+cat > /tmp/iam-policy.json <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -111,11 +115,16 @@ Create an IAM policy that allows invoking the AgentCore runtime:
     }
   ]
 }
+EOF
+
+aws iam create-policy --policy-name agentgateway-agentcore --policy-document file:///tmp/iam-policy.json
 ```
 
 Attach the policy to an IRSA role and annotate the AgentGateway service account:
 
 ```bash
+aws iam attach-role-policy --role-name <YOUR_IRSA_ROLE> --policy-arn=arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:policy/agentgateway-agentcore
+
 kubectl annotate sa agentgateway -n agentgateway-system \
   eks.amazonaws.com/role-arn=arn:aws:iam::<YOUR_AWS_ACCOUNT_ID>:role/<YOUR_IRSA_ROLE>
 
