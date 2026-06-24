@@ -64,6 +64,9 @@ AgentGateway is hit **twice** in the full E2E flow, serving two different roles:
 - An EKS cluster with AgentGateway Enterprise installed
 - An AgentCore runtime deployed via the AgentCore CLI (`agentcore deploy`)
 - An IAM role for IRSA with `InvokeAgentRuntime` + `InvokeAgentRuntimeForUser` permissions
+- [node.js/npm](https://nodejs.org/en/download)
+- [uv](https://github.com/astral-sh/uv#installation)
+- [AWS Cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
 
 ### Create the AgentCore Runtime
 
