@@ -1,4 +1,4 @@
-## 12. OBO
+## OBO
 
 On-Behalf-Of (OBO) is the pattern where an agent makes downstream calls carrying **two identities** at once:
 
