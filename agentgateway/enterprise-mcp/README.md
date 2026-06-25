@@ -938,6 +938,7 @@ With progressive disclosure, On `tools/list` you should see only `get_tool` and 
 ## 12. OBO Agent/tool isolation for MCP
 
 Prerequisite:
+1. [OBO setup](https://github.com/solo-io/solo-sa-agentic/blob/main/agentgateway/auth/OBO/obo.md). This example is kagent
 1. `mcp-gateway` in the **MCP Tool Selection** section is deployed
 2. `mcp-gateway` must reference the STS parameters
 
@@ -967,7 +968,7 @@ spec:
 EOF
 ```
 
-##### `RemoteMCPServer` — single resource referenced by both agents
+### `RemoteMCPServer` — single resource referenced by both agents
 
 ```yaml
 apiVersion: kagent.dev/v1alpha2
@@ -1102,7 +1103,7 @@ EOF
 
 With at least one `Allow` rule present, the policy is deny-by-default, so any request whose `X-Agent-Name` doesn't match a rule sees zero tools and gets zero authorizations.
 
-##### Testing: per-agent tool isolation
+### Testing: per-agent tool isolation
 
 The fastest, most visual way to show this off is MCP Inspector — change the `X-Agent-Name` header in the UI and watch the visible tool list shrink and grow in real time. A scripted curl version follows for automation.
 
@@ -1114,7 +1115,7 @@ export GW_IP=$(kubectl get svc mcp-gateway -n agentgateway-system \
 echo "Gateway: http://${GW_IP}:3000/mcp"
 ```
 
-###### Visual demo: MCP Inspector
+### Visual demo: MCP Inspector
 
 1. Open Inspector:
    ```bash
