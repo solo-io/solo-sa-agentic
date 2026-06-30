@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Region Agents · Reference Architecture · Solo.io</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@500;600;700&family=DM+Sans:wght@400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:      #0B0E18;
+  --bg2:     #151927;
+  --bg3:     #1A2035;
+  --border:  #1E2845;
+  --border2: #2A3558;
+  --accent:  #8A3FFC;
+  --adim:    rgba(138,63,252,.14);
+  --aglow:   rgba(138,63,252,.45);
+  --t1:      #FFFFFF;
+  --t2:      #A0AABE;
+  --t3:      #5A6482;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:var(--bg);color:var(--t1);font-family:'DM Sans',sans-serif;font-size:14px;line-height:1.5;overflow:hidden}
+
+/* ── TOP BAR ── */
+.topbar{height:44px;display:flex;align-items:center;padding:0 20px;border-bottom:1px solid var(--border);position:relative;flex-shrink:0}
+.tb-crumb{font-family:'DM Mono',monospace;font-size:10.5px;color:var(--t3);letter-spacing:.09em;text-transform:uppercase}
+.tb-title{position:absolute;left:50%;transform:translateX(-50%);font-family:'DM Mono',monospace;font-size:12px;color:var(--t2);letter-spacing:.04em;white-space:nowrap}
+.tb-title em{color:var(--accent);font-style:normal}
+
+/* ── LAYOUT ── */
+.layout{display:flex;height:calc(100vh - 44px);overflow:hidden}
+.canvas-area{flex:1;display:flex;flex-direction:column;padding:18px 0 18px 18px;overflow:hidden}
+.side-panel{width:296px;flex-shrink:0;border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+
+/* ── HEADER BLOCK ── */
+.hdr{flex-shrink:0;margin-bottom:14px}
+.eyebrow{font-family:'DM Mono',monospace;font-size:10px;color:var(--accent);letter-spacing:.07em;margin-bottom:7px}
+.hdr-title{font-family:'Figtree',sans-serif;font-size:21px;font-weight:700;line-height:1.22;margin-bottom:8px;color:var(--t1)}
+.hdr-lede{font-size:12.5px;color:var(--t2);max-width:680px;line-height:1.65;margin-bottom:12px}
+.legend{display:flex;gap:10px;flex-wrap:wrap}
+.lchip{font-family:'DM Mono',monospace;font-size:10px;color:var(--t3);background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:3px 8px}
+
+/* ── SVG WRAPPER ── */
+.svg-wrap{flex:1;overflow:auto;position:relative}
+.svg-wrap svg{display:block;min-width:1340px}
+
+/* ── SIDE PANEL ── */
+.step-list{border-bottom:1px solid var(--border);overflow-y:auto;flex-shrink:0}
+.sl-hdr{padding:10px 14px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--t3);letter-spacing:.09em;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.step-row{display:flex;align-items:flex-start;gap:9px;padding:9px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .14s}
+.step-row:hover,.step-row.active{background:var(--adim)}
+.step-row.active .sbadge{background:var(--accent);color:#fff;border-color:var(--accent)}
+.sbadge{font-family:'DM Mono',monospace;font-size:9.5px;font-weight:500;width:19px;height:19px;border-radius:50%;background:var(--bg3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;color:var(--t2)}
+.sinfo{flex:1;min-width:0}
+.stitle{font-size:12px;font-weight:500;color:var(--t1);margin-bottom:2px}
+.ssum{font-size:11px;color:var(--t3);line-height:1.4}
+
+/* ── STEP DETAIL ── */
+.step-detail{flex:1;overflow-y:auto;padding:14px}
+.dtitle{font-family:'Figtree',sans-serif;font-size:14.5px;font-weight:600;color:var(--t1);margin-bottom:7px}
+.dlede{font-size:11.5px;color:var(--t2);line-height:1.65;margin-bottom:12px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin-bottom:12px}
+.kk{font-family:'DM Mono',monospace;font-size:9.5px;color:var(--t3);white-space:nowrap;padding-top:1px}
+.kv-val{font-family:'DM Mono',monospace;font-size:9.5px;color:var(--accent)}
+.codeblk{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:11px;font-family:'DM Mono',monospace;font-size:9.5px;color:#B2C4DC;overflow-x:auto;white-space:pre;line-height:1.65}
+
+/* ── TWEAKS ── */
+.tw-btn{position:fixed;bottom:14px;right:14px;font-family:'DM Mono',monospace;font-size:10px;background:var(--bg2);border:1px solid var(--border);color:var(--t2);padding:5px 11px;cursor:pointer;border-radius:3px;letter-spacing:.06em;z-index:200;transition:border-color .14s,color .14s}
+.tw-btn:hover{border-color:var(--accent);color:var(--accent)}
+.tw-panel{position:fixed;bottom:46px;right:14px;background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:14px;width:216px;z-index:200;display:none}
+.tw-panel.open{display:block}
+.tw-hdr{font-family:'DM Mono',monospace;font-size:10px;color:var(--t3);letter-spacing:.09em;text-transform:uppercase;margin-bottom:10px}
+.tw-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.tw-lbl{font-size:11.5px;color:var(--t2)}
+.toggle{width:30px;height:17px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;cursor:pointer;position:relative;transition:background .18s;flex-shrink:0}
+.toggle.on{background:var(--accent)}
+.toggle::after{content:'';position:absolute;width:11px;height:11px;border-radius:50%;background:#fff;top:2px;left:2px;transition:left .18s}
+.toggle.on::after{left:15px}
+.jsel{background:var(--bg3);border:1px solid var(--border);color:var(--t2);padding:3px 6px;font-family:'DM Mono',monospace;font-size:10px;border-radius:3px;width:130px}
+.rst-btn{font-family:'DM Mono',monospace;font-size:10px;background:transparent;border:1px solid var(--border);color:var(--t3);padding:5px 10px;cursor:pointer;border-radius:3px;width:100%;margin-top:6px;letter-spacing:.04em;transition:border-color .14s,color .14s}
+.rst-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── FLOW ANIMATION ── */
+@keyframes march{to{stroke-dashoffset:-18}}
+.animate-flow .fedge{stroke-dasharray:6 4;animation:march .7s linear infinite}
+.animate-flow .fedge-dash{stroke-dasharray:8 5;animation:march .7s linear infinite}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <span class="tb-crumb">reference architecture</span>
+  <span class="tb-title">Multi-Region Agents&nbsp;·&nbsp;<em>kagent + agentgateway</em></span>
+</div>
+
+<div class="layout">
+
+  <!-- LEFT: canvas -->
+  <div class="canvas-area">
+    <div class="hdr">
+      <div class="eyebrow">· agentic infrastructure&nbsp;&nbsp;·&nbsp;&nbsp;active-active-active&nbsp;&nbsp;·&nbsp;&nbsp;multi-region</div>
+      <div class="hdr-title">Three-region agent mesh with cross-region LLM routing, MCP failover, and A2A delegation</div>
+      <div class="hdr-lede">kagent controllers provision AI agents across three independent Kubernetes clusters. agentgateway instances route LLM inference, MCP tool calls, and agent-to-agent traffic across region boundaries — with health-check failover baked in. Hover an edge or a step row to trace the flow.</div>
+      <div class="legend">
+        <span class="lchip">· cluster boundary</span>
+        <span class="lchip">· llm provider plane</span>
+        <span class="lchip">· validation hop</span>
+        <span class="lchip">- - failover path</span>
+      </div>
+    </div>
+
+    <div class="svg-wrap">
+<svg id="diagram" viewBox="0 0 1348 544" width="1348" height="544" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 1.5 L8 5 L0 8.5z" fill="#2A3558"/>
+  </marker>
+  <marker id="arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 1.5 L8 5 L0 8.5z" fill="#8A3FFC"/>
+  </marker>
+  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur stdDeviation="3.5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+
+<!-- ═══════════════════════════════ CLUSTER BOUNDARIES ═══════════════════════════════ -->
+
+<!-- us-east-1 -->
+<rect x="6" y="6" width="412" height="358" rx="7" fill="none" stroke="#1E2845" stroke-width="1.5" stroke-dasharray="5 3"/>
+<rect x="14" y="0" width="184" height="14" rx="2" fill="#0B0E18"/>
+<text x="18" y="11" font-family="DM Mono,monospace" font-size="9.5" fill="#3A4868">· kubernetes cluster · us-east-1</text>
+
+<!-- us-west-2 -->
+<rect x="428" y="6" width="412" height="358" rx="7" fill="none" stroke="#1E2845" stroke-width="1.5" stroke-dasharray="5 3"/>
+<rect x="436" y="0" width="184" height="14" rx="2" fill="#0B0E18"/>
+<text x="440" y="11" font-family="DM Mono,monospace" font-size="9.5" fill="#3A4868">· kubernetes cluster · us-west-2</text>
+
+<!-- eu-west-1 -->
+<rect x="850" y="6" width="492" height="358" rx="7" fill="none" stroke="#1E2845" stroke-width="1.5" stroke-dasharray="5 3"/>
+<rect x="858" y="0" width="184" height="14" rx="2" fill="#0B0E18"/>
+<text x="862" y="11" font-family="DM Mono,monospace" font-size="9.5" fill="#3A4868">· kubernetes cluster · eu-west-1</text>
+
+<!-- llm provider plane -->
+<rect x="6" y="376" width="1336" height="162" rx="7" fill="none" stroke="#1E2845" stroke-width="1.5" stroke-dasharray="5 3"/>
+<rect x="14" y="370" width="166" height="14" rx="2" fill="#0B0E18"/>
+<text x="18" y="381" font-family="DM Mono,monospace" font-size="9.5" fill="#3A4868">· llm provider plane</text>
+
+<!-- ═══════════════════════════════ EDGES ═══════════════════════════════ -->
+
+<!-- Edge 1: ctrl-east → agent-1-east -->
+<g class="edge-group" id="edge-1" data-step="1">
+  <path class="fedge" d="M 104 68 L 104 88" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="104" cy="78" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="104" y="82" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">1</text>
+</g>
+
+<!-- Edge 2: agent-1-east → gw-east (LLM request) -->
+<g class="edge-group" id="edge-2" data-step="2">
+  <path class="fedge" d="M 104 162 L 104 200" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="104" cy="181" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="104" y="185" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">2</text>
+</g>
+
+<!-- Edge 3: agent-2-east → gw-east (MCP call) -->
+<g class="edge-group" id="edge-3" data-step="3">
+  <path class="fedge" d="M 304 162 L 304 200" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="304" cy="181" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="304" y="185" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">3</text>
+</g>
+
+<!-- Edge 4: gw-east → llm-azure (LLM route, cross-region) -->
+<g class="edge-group" id="edge-4" data-step="4">
+  <path class="fedge" d="M 124 272 L 124 376 L 124 396" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="124" cy="334" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="124" y="338" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">4</text>
+</g>
+
+<!-- Edge 5: gw-east → gw-west (cross-region MCP) -->
+<g class="edge-group" id="edge-5" data-step="6">
+  <path class="fedge" d="M 418 236 L 428 236" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="423" cy="236" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="423" y="240" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">5</text>
+</g>
+
+<!-- Edge 6: gw-west → mcp-math (serve tool) -->
+<g class="edge-group" id="edge-6" data-step="6">
+  <path class="fedge" d="M 724 200 L 724 162" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="724" cy="181" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="724" y="185" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">6</text>
+</g>
+
+<!-- Edge 7: gw-west → llm-bedrock (failover, always dashed) -->
+<g class="edge-group" id="edge-7" data-step="5">
+  <path class="fedge-dash" d="M 632 272 L 632 376 L 680 376 L 680 396" stroke="#2A3558" stroke-width="1.5" fill="none" stroke-dasharray="6 4" marker-end="url(#arr)"/>
+  <circle cx="632" cy="334" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="632" y="338" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">7</text>
+</g>
+
+<!-- Edge 8: gw-west → gw-eu (cross-region) -->
+<g class="edge-group" id="edge-8" data-step="7">
+  <path class="fedge" d="M 818 236 L 850 236" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="834" cy="236" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="834" y="240" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">8</text>
+</g>
+
+<!-- Edge 9: gw-eu → llm-vertex (LLM route) -->
+<g class="edge-group" id="edge-9" data-step="4">
+  <path class="fedge" d="M 1236 272 L 1236 376 L 1248 376 L 1248 396" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="1236" cy="334" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="1236" y="338" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">9</text>
+</g>
+
+<!-- Edge 10: agent-west → agent-eu (A2A cross-region) -->
+<g class="edge-group" id="edge-10" data-step="7">
+  <path class="fedge" d="M 530 88 L 530 70 L 952 70 L 952 88" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="741" cy="70" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="741" y="74" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">10</text>
+</g>
+
+<!-- Edge 11: gw-west → llm-bedrock (primary route) -->
+<g class="edge-group" id="edge-11" data-step="4">
+  <path class="fedge" d="M 600 272 L 600 376 L 650 376 L 650 396" stroke="#2A3558" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <circle cx="600" cy="310" r="7.5" fill="#0B0E18" stroke="#2A3558" stroke-width="1.5"/>
+  <text x="600" y="314" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">11</text>
+</g>
+
+<!-- ═══════════════════════════════ NODES ═══════════════════════════════ -->
+
+<!-- ── us-east-1 ── -->
+
+<!-- kagent-ctrl-east -->
+<g class="node-group" id="ctrl-east">
+  <rect x="20" y="24" width="172" height="44" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="26" y="30" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="39" y="47" font-family="DM Mono,monospace" font-size="13" fill="#8A3FFC" text-anchor="middle">⊞</text>
+  <text x="62" y="43" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">kagent controller</text>
+  <text x="62" y="56" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">CRD reconciler · Go</text>
+</g>
+
+<!-- k8s-ops-agent-east -->
+<g class="node-group" id="agent-1-east">
+  <rect x="20" y="88" width="178" height="74" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="26" y="94" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="39" y="111" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">◈</text>
+  <text x="62" y="108" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">k8s-ops-agent</text>
+  <text x="62" y="120" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">runtime: python-adk</text>
+  <rect x="26" y="132" width="76" height="14" rx="3" fill="#1A2035"/>
+  <text x="64" y="143" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">ns: kagent</text>
+</g>
+
+<!-- infra-agent-east -->
+<g class="node-group" id="agent-2-east">
+  <rect x="216" y="88" width="178" height="74" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="222" y="94" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="235" y="111" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">◈</text>
+  <text x="258" y="108" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">infra-agent</text>
+  <text x="258" y="120" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">runtime: go</text>
+  <rect x="222" y="132" width="76" height="14" rx="3" fill="#1A2035"/>
+  <text x="260" y="143" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">ns: kagent</text>
+</g>
+
+<!-- agentgateway-east -->
+<g class="node-group" id="gw-east">
+  <rect x="20" y="200" width="382" height="72" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="26" y="206" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="39" y="223" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">⤷</text>
+  <text x="62" y="219" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">agentgateway</text>
+  <text x="62" y="231" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">llm gateway · mcp gateway</text>
+  <rect x="26" y="242" width="78" height="14" rx="3" fill="#1A2035"/>
+  <text x="65" y="253" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">:8082 · :8083</text>
+  <rect x="112" y="242" width="52" height="14" rx="3" fill="#1A2035"/>
+  <text x="138" y="253" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">v1.0.1</text>
+</g>
+
+<!-- MCPServer policy block east -->
+<g class="node-group policy-node" id="mcp-policy-east">
+  <rect x="20" y="296" width="192" height="44" rx="4" fill="#0E1320" stroke="#1E2845" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="26" y="312" font-family="DM Mono,monospace" font-size="8.5" fill="#5A6482">kind: MCPServer</text>
+  <text x="26" y="327" font-family="DM Mono,monospace" font-size="8.5" fill="#3A4868">url: …mcp-math-svc:8080/mcp</text>
+</g>
+
+<!-- ── us-west-2 ── -->
+
+<!-- kagent-ctrl-west -->
+<g class="node-group" id="ctrl-west">
+  <rect x="440" y="24" width="172" height="44" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="446" y="30" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="459" y="47" font-family="DM Mono,monospace" font-size="13" fill="#8A3FFC" text-anchor="middle">⊞</text>
+  <text x="482" y="43" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">kagent controller</text>
+  <text x="482" y="56" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">CRD reconciler · Go</text>
+</g>
+
+<!-- k8s-ops-agent-west -->
+<g class="node-group" id="agent-west">
+  <rect x="440" y="88" width="178" height="74" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="446" y="94" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="459" y="111" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">◈</text>
+  <text x="482" y="108" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">k8s-ops-agent</text>
+  <text x="482" y="120" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">runtime: python-adk</text>
+  <rect x="446" y="132" width="76" height="14" rx="3" fill="#1A2035"/>
+  <text x="484" y="143" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">ns: kagent</text>
+</g>
+
+<!-- mcp-math (in us-west-2) -->
+<g class="node-group" id="mcp-math">
+  <rect x="634" y="88" width="186" height="74" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="640" y="94" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="653" y="111" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">⬡</text>
+  <text x="676" y="108" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">mcp-math</text>
+  <text x="676" y="120" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">FastMCP · add · multiply</text>
+  <rect x="640" y="132" width="88" height="14" rx="3" fill="#1A2035"/>
+  <text x="684" y="143" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">:8080/mcp · sse</text>
+</g>
+
+<!-- agentgateway-west -->
+<g class="node-group" id="gw-west">
+  <rect x="440" y="200" width="378" height="72" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="446" y="206" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="459" y="223" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">⤷</text>
+  <text x="482" y="219" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">agentgateway</text>
+  <text x="482" y="231" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">llm gateway · mcp gateway</text>
+  <rect x="446" y="242" width="78" height="14" rx="3" fill="#1A2035"/>
+  <text x="485" y="253" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">:8082 · :8083</text>
+  <rect x="532" y="242" width="52" height="14" rx="3" fill="#1A2035"/>
+  <text x="558" y="253" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">v1.0.1</text>
+</g>
+
+<!-- AgentgatewayBackend policy west -->
+<g class="node-group policy-node" id="gw-backend-west">
+  <rect x="440" y="296" width="220" height="44" rx="4" fill="#0E1320" stroke="#1E2845" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="446" y="312" font-family="DM Mono,monospace" font-size="8.5" fill="#5A6482">kind: AgentgatewayBackend</text>
+  <text x="446" y="327" font-family="DM Mono,monospace" font-size="8.5" fill="#3A4868">deploymentName: gpt-5.4-mini</text>
+</g>
+
+<!-- ── eu-west-1 ── -->
+
+<!-- kagent-ctrl-eu -->
+<g class="node-group" id="ctrl-eu">
+  <rect x="862" y="24" width="172" height="44" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="868" y="30" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="881" y="47" font-family="DM Mono,monospace" font-size="13" fill="#8A3FFC" text-anchor="middle">⊞</text>
+  <text x="904" y="43" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">kagent controller</text>
+  <text x="904" y="56" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">CRD reconciler · Go</text>
+</g>
+
+<!-- k8s-ops-agent-eu -->
+<g class="node-group" id="agent-eu">
+  <rect x="862" y="88" width="178" height="74" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="868" y="94" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="881" y="111" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">◈</text>
+  <text x="904" y="108" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">k8s-ops-agent</text>
+  <text x="904" y="120" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">runtime: python-adk</text>
+  <rect x="868" y="132" width="76" height="14" rx="3" fill="#1A2035"/>
+  <text x="906" y="143" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">ns: kagent</text>
+</g>
+
+<!-- agentgateway-eu -->
+<g class="node-group" id="gw-eu">
+  <rect x="862" y="200" width="472" height="72" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="868" y="206" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="881" y="223" font-family="DM Mono,monospace" font-size="11" fill="#8A3FFC" text-anchor="middle">⤷</text>
+  <text x="904" y="219" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">agentgateway</text>
+  <text x="904" y="231" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">llm gateway · mcp gateway</text>
+  <rect x="868" y="242" width="78" height="14" rx="3" fill="#1A2035"/>
+  <text x="907" y="253" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">:8082 · :8083</text>
+  <rect x="954" y="242" width="52" height="14" rx="3" fill="#1A2035"/>
+  <text x="980" y="253" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC" text-anchor="middle">v1.0.1</text>
+</g>
+
+<!-- HTTPRoute policy eu -->
+<g class="node-group policy-node" id="httproute-eu">
+  <rect x="862" y="296" width="220" height="44" rx="4" fill="#0E1320" stroke="#1E2845" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="868" y="312" font-family="DM Mono,monospace" font-size="8.5" fill="#5A6482">kind: HTTPRoute</text>
+  <text x="868" y="327" font-family="DM Mono,monospace" font-size="8.5" fill="#3A4868">path: /vertex → /v1/chat/completions</text>
+</g>
+
+<!-- ── LLM BACKENDS ── -->
+
+<!-- Azure Foundry -->
+<g class="node-group" id="llm-azure">
+  <rect x="18" y="396" width="208" height="60" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="24" y="402" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="37" y="419" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">AI</text>
+  <text x="60" y="416" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">Azure Foundry</text>
+  <text x="60" y="428" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">gpt-5.4-mini · southcentralus</text>
+  <rect x="24" y="440" width="112" height="12" rx="3" fill="#1A2035"/>
+  <text x="80" y="450" font-family="DM Mono,monospace" font-size="8" fill="#8A3FFC" text-anchor="middle">2025-01-01-preview</text>
+</g>
+
+<!-- AWS Bedrock -->
+<g class="node-group" id="llm-bedrock">
+  <rect x="568" y="396" width="224" height="60" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="574" y="402" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="587" y="419" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">AI</text>
+  <text x="610" y="416" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">AWS Bedrock</text>
+  <text x="610" y="428" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">claude-3-7-sonnet · us-east-1</text>
+  <rect x="574" y="440" width="116" height="12" rx="3" fill="#1A2035"/>
+  <text x="632" y="450" font-family="DM Mono,monospace" font-size="8" fill="#8A3FFC" text-anchor="middle">bedrock-runtime</text>
+</g>
+
+<!-- Google Vertex -->
+<g class="node-group" id="llm-vertex">
+  <rect x="1118" y="396" width="218" height="60" rx="5" fill="#151927" stroke="#1E2845" stroke-width="1"/>
+  <rect x="1124" y="402" width="26" height="26" rx="3" fill="#1A2035"/>
+  <text x="1137" y="419" font-family="DM Mono,monospace" font-size="9" fill="#8A3FFC" text-anchor="middle">AI</text>
+  <text x="1160" y="416" font-family="Figtree,sans-serif" font-size="11" font-weight="600" fill="#FFFFFF">Google Vertex</text>
+  <text x="1160" y="428" font-family="DM Sans,sans-serif" font-size="9" fill="#5A6482">gemini-2.5-pro · us-central1</text>
+  <rect x="1124" y="440" width="116" height="12" rx="3" fill="#1A2035"/>
+  <text x="1182" y="450" font-family="DM Mono,monospace" font-size="8" fill="#8A3FFC" text-anchor="middle">aiplatform.googleapis</text>
+</g>
+
+<!-- Observability labels -->
+<text x="846" y="480" font-family="DM Mono,monospace" font-size="9" fill="#3A4868" text-anchor="middle">gen_ai.provider.name · gen_ai.usage.input_tokens · gen_ai.usage.output_tokens · duration_ms</text>
+<text x="846" y="496" font-family="DM Mono,monospace" font-size="9" fill="#2A3450" text-anchor="middle">emitted per hop by agentgateway · OpenTelemetry-compatible</text>
+
+</svg>
+    </div>
+  </div>
+
+  <!-- RIGHT: side panel -->
+  <div class="side-panel">
+    <div class="step-list" id="stepList">
+      <div class="sl-hdr">flow · 7 steps</div>
+    </div>
+    <div class="step-detail" id="stepDetail">
+      <div class="dtitle" id="detailTitle">Hover a step to preview</div>
+      <div class="dlede" id="detailLede">Click to pin the selection and explore the manifest snippet for each hop.</div>
+      <div class="kv" id="kvGrid"></div>
+      <pre class="codeblk" id="codeBlock" style="display:none"></pre>
+    </div>
+  </div>
+</div>
+
+<button class="tw-btn" id="twBtn">tweaks ↑</button>
+<div class="tw-panel" id="twPanel">
+  <div class="tw-hdr">display options</div>
+  <div class="tw-row">
+    <span class="tw-lbl">Animate flow</span>
+    <div class="toggle" id="togFlow"></div>
+  </div>
+  <div class="tw-row">
+    <span class="tw-lbl">Jump to step</span>
+    <select class="jsel" id="jumpSel">
+      <option value="">select</option>
+    </select>
+  </div>
+  <button class="rst-btn" id="rstBtn">reset highlights</button>
+</div>
+
+<script>
+// ────────────────────────────────────────────────────────────
+// DATA MODEL
+// ────────────────────────────────────────────────────────────
+
+window.MULTI_STEPS = [
+  {
+    num: 1,
+    title: 'Controller provisioning',
+    summary: 'kagent controller reconciles the Agent CRD and schedules the engine pod.',
+    detail: 'The kagent controller (written in Go) watches for Agent custom resources across all three clusters independently. On detection, it creates the engine deployment, service account, and RBAC bindings. Runtime is selected per-agent via spec.runtime — python-adk (default, ~15s cold-start) or go (~2s cold-start).',
+    facts: {
+      'API version': 'kagent.dev/v1alpha2',
+      'Kind': 'Agent',
+      'Controller': 'kagent-controller · Go',
+      'Namespace': 'kagent',
+      'Runtime options': 'python-adk | go',
+      'Reconcile loop': 'watch → diff → apply',
+    },
+    code: `apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: k8s-ops-agent
+  namespace: kagent
+spec:
+  description: Kubernetes operations agent.
+  type: Declarative
+  declarative:
+    modelConfig: default-model-config
+    systemMessage: |-
+      You are an expert Kubernetes agent
+      that uses tools to help users.
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: math-tools
+          kind: RemoteMCPServer
+          toolNames:
+            - add
+            - multiply`,
+    nodes: ['ctrl-east','agent-1-east','ctrl-west','agent-west','ctrl-eu','agent-eu'],
+    edges: ['edge-1'],
+  },
+  {
+    num: 2,
+    title: 'LLM request routing',
+    summary: 'Agent sends an OpenAI-compatible request to the local agentgateway LLM endpoint.',
+    detail: 'The agent engine issues a POST to agentgateway on :8082/azureopenai. agentgateway applies the AgentgatewayBackend policy — rewriting the path to /v1/chat/completions, injecting the API key from the Kubernetes Secret, and forwarding to Azure Foundry. Logs include gen_ai.* OpenTelemetry attributes per request.',
+    facts: {
+      'Endpoint': ':8082/azureopenai',
+      'Path rewrite': '/azureopenai → /v1/chat/completions',
+      'Backend': 'azureopenaibackend',
+      'Auth': 'secretRef: azureopenai-secret',
+      'Protocol': 'HTTP/1.1 · LLM',
+      'Log field': 'gen_ai.provider.name=azure.openai',
+    },
+    code: `apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: azureopenaibackend
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      azureopenai:
+        endpoint: YOUR_FOUNDRY.services.ai.azure.com
+        deploymentName: gpt-5.4-mini
+        apiVersion: 2025-01-01-preview
+  policies:
+    auth:
+      secretRef:
+        name: azureopenai-secret`,
+    nodes: ['agent-1-east','gw-east','llm-azure'],
+    edges: ['edge-2','edge-4'],
+  },
+  {
+    num: 3,
+    title: 'MCP tool call dispatch',
+    summary: 'Agent serialises a JSON-RPC 2.0 request; agentgateway routes it to the registered MCP server.',
+    detail: 'When the agent needs a tool (add or multiply), the engine posts a JSON-RPC 2.0 message to agentgateway on :8083/mcp. The MCPServer CRD registered in the cluster maps the tool namespace to the mcp-math service. The MCP server is implemented with FastMCP and served via uvicorn over SSE transport.',
+    facts: {
+      'Endpoint': ':8083/mcp',
+      'Protocol': 'JSON-RPC 2.0 · SSE',
+      'CRD': 'MCPServer · kagent.dev/v1alpha2',
+      'Tools': 'add(a,b) → int · multiply(a,b) → int',
+      'Server': 'FastMCP · uvicorn · Python',
+      'Transport': 'sse',
+    },
+    code: `apiVersion: kagent.dev/v1alpha2
+kind: MCPServer
+metadata:
+  name: math-tools
+  namespace: kagent
+spec:
+  url: http://mcp-math-svc.default.svc.cluster.local:8080/mcp
+  transport: sse`,
+    nodes: ['agent-2-east','gw-east','gw-west','mcp-math','mcp-policy-east'],
+    edges: ['edge-3','edge-5','edge-6'],
+  },
+  {
+    num: 4,
+    title: 'Cross-region LLM routing',
+    summary: 'Each regional agentgateway routes inference to its local LLM provider via HTTPRoute path rewrite.',
+    detail: 'agentgateway in us-east-1 routes to Azure Foundry (southcentralus); us-west-2 to AWS Bedrock (us-east-1); eu-west-1 to Google Vertex (us-central1). Each region holds its own AgentgatewayBackend and Gateway resource. The HTTPRoute rewrites the generic path prefix to the provider native completion endpoint. All three providers are OpenAI-API-compatible from the agent perspective.',
+    facts: {
+      'us-east-1 → LLM': 'Azure Foundry · southcentralus',
+      'us-west-2 → LLM': 'AWS Bedrock · us-east-1',
+      'eu-west-1 → LLM': 'Google Vertex · us-central1',
+      'Path rewrite': 'PathPrefix → ReplaceFullPath',
+      'Gateway class': 'agentgateway',
+      'Observability': 'gen_ai.* OTEL attrs per hop',
+    },
+    code: `apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: azureopenai
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+    - name: agentgateway-route-foundry
+      namespace: agentgateway-system
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /azureopenai
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplaceFullPath
+          replaceFullPath: /v1/chat/completions
+    backendRefs:
+    - name: azureopenaibackend
+      namespace: agentgateway-system
+      group: agentgateway.dev
+      kind: AgentgatewayBackend`,
+    nodes: ['gw-east','gw-west','gw-eu','llm-azure','llm-bedrock','llm-vertex','gw-backend-west','httproute-eu'],
+    edges: ['edge-4','edge-11','edge-9'],
+  },
+  {
+    num: 5,
+    title: 'Health-check failover',
+    summary: 'agentgateway detects a degraded primary LLM endpoint and reroutes to the backup backend.',
+    detail: 'agentgateway passively health-checks each AgentgatewayBackend. When the primary (Azure Foundry) returns 5xx or times out, traffic is automatically rerouted to the backup backend (AWS Bedrock). The dashed edge represents the failover path. Recovery is automatic once the primary endpoint returns healthy responses. All failover events are captured in the agentgateway pod logs.',
+    facts: {
+      'Trigger': '5xx response | connection timeout',
+      'Primary': 'azureopenaibackend · Azure Foundry',
+      'Failover': 'bedrockbackend · AWS Bedrock us-east-1',
+      'Model': 'claude-3-7-sonnet-20250219',
+      'Recovery': 'passive health-check',
+      'Log field': 'gen_ai.provider.name=aws.bedrock',
+    },
+    code: `# agentgateway automatic failover example
+# Primary: azureopenaibackend (Azure Foundry)
+# Failover: bedrockbackend (AWS Bedrock)
+#
+# Logged on failover:
+# gen_ai.provider.name=aws.bedrock
+# gen_ai.request.model=claude-3-7-sonnet
+# gen_ai.response.model=claude-3-7-sonnet-20250219
+# gen_ai.usage.input_tokens=34
+# gen_ai.usage.output_tokens=173
+# http.status=200
+# duration=1704ms`,
+    nodes: ['gw-west','llm-azure','llm-bedrock','gw-backend-west'],
+    edges: ['edge-7'],
+  },
+  {
+    num: 6,
+    title: 'Cross-region MCP routing',
+    summary: 'agentgateway in us-east-1 federates an MCP tool call to mcp-math running in us-west-2.',
+    detail: 'When the MCPServer is not present in the local cluster, agentgateway forwards the JSON-RPC 2.0 request to the peer agentgateway in us-west-2. The peer resolves the tool via its local AgentgatewayBackend and streams the result back over SSE. The agent in us-east-1 receives the tool result transparently — no cross-cluster discovery logic needed in the agent itself.',
+    facts: {
+      'Caller': 'agentgateway · us-east-1',
+      'Peer': 'agentgateway · us-west-2',
+      'Target': 'mcp-math-svc · default ns',
+      'Tools': 'add · multiply',
+      'Protocol': 'JSON-RPC 2.0 · SSE',
+      'Hop': 'gw-east → gw-west → mcp-math',
+    },
+    code: `# mcp-math server (ConfigMap-mounted Python)
+from mcp.server.fastmcp import FastMCP
+mcp = FastMCP("Math-Service")
+
+@mcp.tool()
+def add(a: int, b: int) -> int:
+    """Add two numbers together"""
+    return a + b
+
+@mcp.tool()
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers together"""
+    return a * b`,
+    nodes: ['gw-east','gw-west','mcp-math','gw-eu'],
+    edges: ['edge-5','edge-6','edge-8'],
+  },
+  {
+    num: 7,
+    title: 'A2A cross-region delegation',
+    summary: 'k8s-ops-agent in us-west-2 delegates a sub-task to k8s-ops-agent in eu-west-1 via the A2A protocol.',
+    detail: 'Every Agent created by kagent automatically implements the A2A protocol and exposes a card at /api/a2a/{namespace}/{agent-name}/.well-known/agent.json on port 8083. A parent agent can invoke a remote agent by posting an A2A task request. In multi-region deployments, the request flows through the local agentgateway to the peer gateway in eu-west-1, which forwards it to the target agent engine.',
+    facts: {
+      'Caller': 'k8s-ops-agent · us-west-2',
+      'Callee': 'k8s-ops-agent · eu-west-1',
+      'A2A port': '8083',
+      'Card endpoint': '/api/a2a/kagent/k8s-ops-agent/.well-known/agent.json',
+      'Capabilities': 'streaming: true · stateTransitionHistory: true',
+      'Route': 'agent-west → gw-west → gw-eu → agent-eu',
+    },
+    code: `# A2A agent card (returned by kagent)
+{
+  "name": "k8s-ops-agent",
+  "url": "http://kagent-ctrl:8083/api/a2a/kagent/k8s-ops-agent/",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "stateTransitionHistory": true
+  },
+  "skills": [
+    {
+      "id": "get-resources-skill",
+      "name": "Get Resources",
+      "inputModes": ["text"],
+      "outputModes": ["text"],
+      "tags": ["k8s", "resources"]
+    }
+  ]
+}`,
+    nodes: ['agent-west','gw-west','gw-eu','agent-eu'],
+    edges: ['edge-8','edge-10'],
+  },
+];
+
+window.MULTI_NODES = {
+  'ctrl-east':{'label':'kagent controller','policy':false},
+  'agent-1-east':{'label':'k8s-ops-agent','policy':false},
+  'agent-2-east':{'label':'infra-agent','policy':false},
+  'gw-east':{'label':'agentgateway','policy':false},
+  'mcp-policy-east':{'label':'MCPServer policy','policy':true},
+  'ctrl-west':{'label':'kagent controller','policy':false},
+  'agent-west':{'label':'k8s-ops-agent','policy':false},
+  'mcp-math':{'label':'mcp-math','policy':false},
+  'gw-west':{'label':'agentgateway','policy':false},
+  'gw-backend-west':{'label':'AgentgatewayBackend','policy':true},
+  'ctrl-eu':{'label':'kagent controller','policy':false},
+  'agent-eu':{'label':'k8s-ops-agent','policy':false},
+  'gw-eu':{'label':'agentgateway','policy':false},
+  'httproute-eu':{'label':'HTTPRoute','policy':true},
+  'llm-azure':{'label':'Azure Foundry','policy':false},
+  'llm-bedrock':{'label':'AWS Bedrock','policy':false},
+  'llm-vertex':{'label':'Google Vertex','policy':false},
+};
+
+window.MULTI_EDGES = [
+  {id:'edge-1', step:1}, {id:'edge-2', step:2}, {id:'edge-3', step:3},
+  {id:'edge-4', step:4}, {id:'edge-5', step:6}, {id:'edge-6', step:6},
+  {id:'edge-7', step:5}, {id:'edge-8', step:7}, {id:'edge-9', step:4},
+  {id:'edge-10',step:7}, {id:'edge-11',step:4},
+];
+
+// ────────────────────────────────────────────────────────────
+// RENDER STEP LIST
+// ────────────────────────────────────────────────────────────
+
+const stepList = document.getElementById('stepList');
+const jumpSel  = document.getElementById('jumpSel');
+
+MULTI_STEPS.forEach(s => {
+  // row
+  const row = document.createElement('div');
+  row.className = 'step-row';
+  row.dataset.step = s.num;
+  row.innerHTML = `<div class="sbadge">${s.num}</div><div class="sinfo"><div class="stitle">${s.title}</div><div class="ssum">${s.summary}</div></div>`;
+  row.addEventListener('mouseenter', () => { if (!pinned) highlight(s.num); });
+  row.addEventListener('mouseleave', () => { if (!pinned) reset(); });
+  row.addEventListener('click', () => {
+    pinned = (pinned === s.num) ? null : s.num;
+    pinned ? highlight(pinned) : reset();
+  });
+  stepList.appendChild(row);
+  // jump select
+  const opt = document.createElement('option');
+  opt.value = s.num; opt.textContent = `${s.num} · ${s.title}`;
+  jumpSel.appendChild(opt);
+});
+
+// ────────────────────────────────────────────────────────────
+// HIGHLIGHT ENGINE
+// ────────────────────────────────────────────────────────────
+
+let pinned = null;
+
+function highlight(num) {
+  const s = MULTI_STEPS.find(x => x.num === num);
+  if (!s) return;
+
+  // step rows
+  document.querySelectorAll('.step-row').forEach(r =>
+    r.classList.toggle('active', +r.dataset.step === num));
+
+  // nodes
+  document.querySelectorAll('.node-group').forEach(ng => {
+    const inStep = s.nodes.includes(ng.id);
+    const isPolicy = ng.classList.contains('policy-node');
+    ng.style.opacity = inStep ? '1' : '0.12';
+    // update stroke on main rect (first rect child)
+    const r = ng.querySelector('rect');
+    if (r && !isPolicy) r.setAttribute('stroke', inStep ? '#8A3FFC' : '#1E2845');
+  });
+
+  // edges
+  document.querySelectorAll('.edge-group').forEach(eg => {
+    const inStep = s.edges.includes(eg.id);
+    eg.style.opacity = inStep ? '1' : '0.06';
+    const path = eg.querySelector('path');
+    const circ = eg.querySelector('circle');
+    if (path) {
+      path.setAttribute('stroke', inStep ? '#8A3FFC' : '#2A3558');
+      if (inStep) path.setAttribute('marker-end', 'url(#arr-a)');
+      else path.setAttribute('marker-end', 'url(#arr)');
+    }
+    if (circ) circ.setAttribute('stroke', inStep ? '#8A3FFC' : '#2A3558');
+  });
+
+  showDetail(s);
+}
+
+function reset() {
+  document.querySelectorAll('.step-row').forEach(r => r.classList.remove('active'));
+  document.querySelectorAll('.node-group').forEach(ng => {
+    ng.style.opacity = '1';
+    const isPolicy = ng.classList.contains('policy-node');
+    const r = ng.querySelector('rect');
+    if (r && !isPolicy) r.setAttribute('stroke', '#1E2845');
+  });
+  document.querySelectorAll('.edge-group').forEach(eg => {
+    eg.style.opacity = '1';
+    const path = eg.querySelector('path');
+    const circ = eg.querySelector('circle');
+    if (path) {
+      path.setAttribute('stroke', '#2A3558');
+      path.setAttribute('marker-end', 'url(#arr)');
+    }
+    if (circ) circ.setAttribute('stroke', '#2A3558');
+  });
+  document.getElementById('detailTitle').textContent = 'Hover a step to preview';
+  document.getElementById('detailLede').textContent = 'Click to pin the selection and explore the manifest snippet for each hop.';
+  document.getElementById('kvGrid').innerHTML = '';
+  document.getElementById('codeBlock').style.display = 'none';
+}
+
+function showDetail(s) {
+  document.getElementById('detailTitle').textContent = s.title;
+  document.getElementById('detailLede').textContent = s.detail;
+  const kv = document.getElementById('kvGrid');
+  kv.innerHTML = '';
+  Object.entries(s.facts).forEach(([k, v]) => {
+    const ke = document.createElement('span'); ke.className = 'kk'; ke.textContent = k;
+    const ve = document.createElement('span'); ve.className = 'kv-val'; ve.textContent = v;
+    kv.appendChild(ke); kv.appendChild(ve);
+  });
+  const cb = document.getElementById('codeBlock');
+  cb.textContent = s.code;
+  cb.style.display = 'block';
+}
+
+// ────────────────────────────────────────────────────────────
+// EDGE INTERACTIVITY
+// ────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.edge-group').forEach(eg => {
+  eg.style.cursor = 'pointer';
+  const sn = parseInt(eg.dataset.step);
+  eg.addEventListener('mouseenter', () => { if (!pinned) highlight(sn); });
+  eg.addEventListener('mouseleave', () => { if (!pinned) reset(); });
+  eg.addEventListener('click', () => {
+    pinned = (pinned === sn) ? null : sn;
+    pinned ? highlight(pinned) : reset();
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// TWEAKS
+// ────────────────────────────────────────────────────────────
+
+const twBtn = document.getElementById('twBtn');
+const twPanel = document.getElementById('twPanel');
+twBtn.addEventListener('click', () => twPanel.classList.toggle('open'));
+
+document.getElementById('togFlow').addEventListener('click', function() {
+  this.classList.toggle('on');
+  document.getElementById('diagram').classList.toggle('animate-flow');
+});
+
+jumpSel.addEventListener('change', e => {
+  if (!e.target.value) return;
+  pinned = parseInt(e.target.value);
+  highlight(pinned);
+});
+
+document.getElementById('rstBtn').addEventListener('click', () => {
+  pinned = null; reset();
+  jumpSel.value = '';
+  twPanel.classList.remove('open');
+});
+</script>
+</body>
+</html>

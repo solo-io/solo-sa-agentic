@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BYO ADK agents · kagent — Reference Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:          #0B0E18;
+  --surf:        #151927;
+  --surf2:       #1C2235;
+  --border:      #2A3450;
+  --border-dim:  #1C2338;
+  --accent:      #8A3FFC;
+  --accent-glow: rgba(138,63,252,0.25);
+  --accent-bg:   rgba(138,63,252,0.08);
+  --text:        #FFFFFF;
+  --text2:       #8892A4;
+  --text3:       #4A5672;
+  --mono: 'DM Mono', monospace;
+  --sans: 'DM Sans', sans-serif;
+  --head: 'Figtree', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--sans); }
+
+/* ── TOP BAR ── */
+.topbar {
+  height: 40px;
+  background: var(--surf);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 20px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.topbar-crumb {
+  font-family: var(--mono); font-size: 9.5px;
+  color: var(--text3); letter-spacing: 0.07em; text-transform: uppercase;
+  flex: 1;
+}
+.topbar-center {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--text2); letter-spacing: 0.03em;
+  position: absolute; left: 50%; transform: translateX(-50%);
+}
+.topbar-right { flex: 1; }
+
+/* ── LAYOUT ── */
+.app { display: flex; height: calc(100vh - 40px); overflow: hidden; }
+
+/* ── LEFT CANVAS ── */
+.canvas { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+.header-block { padding: 18px 22px 14px; flex-shrink: 0; border-bottom: 1px solid var(--border-dim); }
+.eyebrow-row { display: flex; gap: 5px; align-items: center; margin-bottom: 9px; }
+.eyebrow-tag { font-family: var(--mono); font-size: 9px; color: var(--accent); letter-spacing: 0.07em; text-transform: uppercase; }
+.eyebrow-dot { font-family: var(--mono); font-size: 9px; color: var(--border); }
+.h-title { font-family: var(--head); font-size: 17px; font-weight: 700; line-height: 1.3; margin-bottom: 7px; }
+.h-lede { font-family: var(--sans); font-size: 12px; color: var(--text2); line-height: 1.55; max-width: 560px; margin-bottom: 11px; }
+.legend-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.legend-chip {
+  font-family: var(--mono); font-size: 9px; color: var(--text3);
+  border: 1px solid var(--border-dim); padding: 2px 8px; border-radius: 3px; letter-spacing: 0.04em;
+}
+
+/* ── DIAGRAM ── */
+.diagram-wrap { flex: 1; overflow: hidden; padding: 10px 14px 12px; }
+.diagram-wrap svg { width: 100%; height: 100%; }
+
+/* SVG interactive states */
+.svg-node, .svg-edge { transition: opacity 0.2s; }
+.svg-node .node-bg { transition: filter 0.2s; }
+.dimmed { opacity: 0.12; }
+.svg-node.active .node-bg { filter: drop-shadow(0 0 6px rgba(138,63,252,0.7)); }
+.svg-edge.active .edge-path { stroke: var(--accent) !important; }
+.svg-edge.active .edge-badge-circle { fill: var(--accent) !important; }
+.svg-edge.active .edge-badge-text { fill: white !important; }
+
+/* Animate flow */
+@keyframes march { to { stroke-dashoffset: -20; } }
+body.animate-flow .svg-edge .edge-path {
+  stroke-dasharray: 6 4;
+  animation: march 0.55s linear infinite;
+}
+
+/* ── RIGHT PANEL ── */
+.panel {
+  width: 370px; flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--surf);
+}
+.panel-ctrl {
+  padding: 7px 14px; border-bottom: 1px solid var(--border);
+  display: flex; gap: 8px; align-items: center; flex-shrink: 0;
+}
+.ctrl-label { font-family: var(--mono); font-size: 9.5px; color: var(--text3); letter-spacing: 0.06em; flex: 1; text-transform: uppercase; }
+.btn-reset {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em;
+  color: var(--text3); background: none; border: 1px solid var(--border);
+  padding: 3px 9px; border-radius: 3px; cursor: pointer; transition: all 0.15s;
+}
+.btn-reset:hover { color: var(--text2); border-color: var(--text3); }
+
+.panel-steps { flex-shrink: 0; height: 284px; overflow-y: auto; border-bottom: 1px solid var(--border); }
+.panel-steps::-webkit-scrollbar { width: 3px; }
+.panel-steps::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.step-row {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 8px 14px; cursor: pointer;
+  border-bottom: 1px solid var(--border-dim);
+  transition: background 0.12s;
+  border-left: 2px solid transparent;
+}
+.step-row:last-child { border-bottom: none; }
+.step-row:hover { background: var(--surf2); }
+.step-row.active { background: var(--accent-bg); border-left-color: var(--accent); padding-left: 12px; }
+
+.step-num {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 500;
+  color: var(--text3); background: var(--border-dim);
+  width: 18px; height: 18px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; margin-top: 1px; transition: all 0.15s;
+}
+.step-row.active .step-num { background: var(--accent); color: #fff; }
+.step-text { flex: 1; min-width: 0; }
+.step-title { font-family: var(--head); font-size: 11.5px; font-weight: 600; line-height: 1.3; margin-bottom: 2px; }
+.step-summary { font-family: var(--sans); font-size: 10.5px; color: var(--text2); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.panel-detail { flex: 1; overflow-y: auto; padding: 16px 14px; }
+.panel-detail::-webkit-scrollbar { width: 3px; }
+.panel-detail::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.detail-empty {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 10px; color: var(--text3); text-align: center; line-height: 1.8;
+}
+.detail-title { font-family: var(--head); font-size: 13px; font-weight: 700; margin-bottom: 5px; }
+.detail-lede { font-family: var(--sans); font-size: 11.5px; color: var(--text2); line-height: 1.55; margin-bottom: 14px; }
+.detail-facts {
+  background: var(--bg); border: 1px solid var(--border-dim); border-radius: 5px;
+  overflow: hidden; margin-bottom: 14px;
+}
+.fact-row { display: flex; border-bottom: 1px solid var(--border-dim); font-size: 10.5px; }
+.fact-row:last-child { border-bottom: none; }
+.fact-k {
+  font-family: var(--mono); color: var(--text3); padding: 5px 9px;
+  white-space: nowrap; flex-shrink: 0; width: 108px;
+  border-right: 1px solid var(--border-dim);
+}
+.fact-v { font-family: var(--mono); color: var(--text2); padding: 5px 9px; word-break: break-all; }
+.code-label { font-family: var(--mono); font-size: 8.5px; color: var(--text3); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 6px; }
+.code-block {
+  background: #080A11; border: 1px solid var(--border-dim); border-radius: 5px;
+  padding: 10px 12px; overflow-x: auto;
+}
+.code-block pre { font-family: var(--mono); font-size: 10px; line-height: 1.65; color: var(--text2); white-space: pre; margin: 0; }
+
+/* ── TWEAKS ── */
+.tweaks-btn {
+  position: fixed; bottom: 14px; left: 14px; z-index: 200;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+  color: var(--text3); background: var(--surf); border: 1px solid var(--border);
+  padding: 5px 12px; border-radius: 4px; cursor: pointer; transition: all 0.15s;
+  text-transform: uppercase;
+}
+.tweaks-btn:hover { color: var(--text2); }
+.tweaks-panel {
+  position: fixed; bottom: 46px; left: 14px; z-index: 200; width: 236px;
+  background: var(--surf); border: 1px solid var(--border); border-radius: 7px;
+  padding: 14px 16px; display: none;
+}
+.tweaks-panel.open { display: block; }
+.tweaks-hed { font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 12px; }
+.tweak-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.tweak-lbl { font-family: var(--sans); font-size: 12px; color: var(--text2); }
+.tog {
+  width: 30px; height: 16px; background: var(--border); border-radius: 8px;
+  position: relative; cursor: pointer; border: none; transition: background 0.2s; flex-shrink: 0;
+}
+.tog.on { background: var(--accent); }
+.tog::after {
+  content: ''; position: absolute; width: 10px; height: 10px;
+  background: white; border-radius: 50%; top: 3px; left: 3px; transition: transform 0.2s;
+}
+.tog.on::after { transform: translateX(14px); }
+.tweak-divider { border: none; border-top: 1px solid var(--border-dim); margin: 8px 0; }
+.tweak-lbl-block { font-family: var(--sans); font-size: 11px; color: var(--text2); margin-bottom: 5px; }
+.tweak-select {
+  width: 100%; font-family: var(--mono); font-size: 10.5px;
+  background: var(--bg); color: var(--text2); border: 1px solid var(--border);
+  border-radius: 4px; padding: 4px 7px;
+}
+
+/* Binary BG */
+.binary-bg {
+  position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  font-family: var(--mono); font-size: 10px; color: rgba(138,63,252,0.045);
+  overflow: hidden; line-height: 1.35; word-break: break-all; padding: 10px;
+  opacity: 0; transition: opacity 0.6s;
+}
+.binary-bg.vis { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- Binary pattern layer -->
+<div class="binary-bg" id="binaryBg"></div>
+
+<!-- Top bar -->
+<div class="topbar">
+  <span class="topbar-crumb">reference architecture</span>
+  <span class="topbar-center">BYO ADK agents · kagent · A2A protocol</span>
+  <div class="topbar-right"></div>
+</div>
+
+<div class="app">
+
+  <!-- ── LEFT CANVAS ── -->
+  <div class="canvas">
+    <div class="header-block">
+      <div class="eyebrow-row">
+        <span class="eyebrow-tag">agent integration</span>
+        <span class="eyebrow-dot">·</span>
+        <span class="eyebrow-tag">BYO ADK</span>
+        <span class="eyebrow-dot">·</span>
+        <span class="eyebrow-tag">A2A protocol</span>
+        <span class="eyebrow-dot">·</span>
+        <span class="eyebrow-tag">kagent v1alpha2</span>
+      </div>
+      <div class="h-title">Custom ADK agents running natively inside kagent via the A2A protocol</div>
+      <div class="h-lede">
+        A BYO Agent CR wraps your containerised ADK agent, letting kagent manage its lifecycle and proxy A2A traffic through the controller.
+        Hover or click a step to trace the request path end to end.
+      </div>
+      <div class="legend-row">
+        <span class="legend-chip">· cluster boundary</span>
+        <span class="legend-chip">· namespace boundary</span>
+        <span class="legend-chip">· numbered hop</span>
+        <span class="legend-chip">→ request / response</span>
+      </div>
+    </div>
+
+    <!-- SVG DIAGRAM -->
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 720 400" xmlns="http://www.w3.org/2000/svg" id="diagramSvg">
+        <defs>
+          <!-- Arrow markers -->
+          <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M1,0.5 L1,5.5 L7,3 z" fill="#2A3450"/>
+          </marker>
+          <marker id="arr-a" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M1,0.5 L1,5.5 L7,3 z" fill="#8A3FFC"/>
+          </marker>
+          <!-- Glow filter -->
+          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="4" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <!-- Subtle grid pattern -->
+          <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+            <path d="M24,0 L0,0 0,24" fill="none" stroke="#1C2235" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Grid background -->
+        <rect width="720" height="400" fill="url(#grid)" opacity="0.6"/>
+
+        <!-- ── KUBERNETES CLUSTER BOUNDARY ── -->
+        <rect x="148" y="26" width="438" height="364" rx="10" fill="none"
+              stroke="#2A3450" stroke-width="1.5" stroke-dasharray="7 4"/>
+        <!-- Cluster label pill — right side to keep left clear for edge routing -->
+        <rect x="454" y="18" width="124" height="18" rx="3" fill="#0B0E18" stroke="#2A3450" stroke-width="1"/>
+        <text x="462" y="31" font-family="DM Mono,monospace" font-size="9" fill="#4A5672" letter-spacing="0.03em">Kubernetes cluster</text>
+
+        <!-- ── KAGENT NAMESPACE BOUNDARY ── -->
+        <rect x="166" y="63" width="402" height="314" rx="8" fill="none"
+              stroke="#1E2844" stroke-width="1.2" stroke-dasharray="5 4"/>
+        <!-- Namespace label pill -->
+        <rect x="173" y="54" width="148" height="18" rx="3" fill="#0B0E18" stroke="#1E2844" stroke-width="1"/>
+        <text x="181" y="67" font-family="DM Mono,monospace" font-size="9" fill="#3A4562" letter-spacing="0.03em">namespace · kagent</text>
+
+        <!-- ═══════════════ EDGES ═══════════════ -->
+
+        <!-- E1: developer → registry (build & push) — routes above cluster boundary at y=14 -->
+        <g class="svg-edge" data-edge="E1">
+          <path class="edge-path" d="M 128,193 L 128,14 L 256,14" fill="none" stroke="#2A3450" stroke-width="1.5" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="192" cy="14" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="192" y="18" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">1</text>
+        </g>
+
+        <!-- E2: developer → controller (kubectl) — vertical at x=140 stays outside cluster, crosses boundary horizontally -->
+        <g class="svg-edge" data-edge="E2">
+          <path class="edge-path" d="M 128,214 L 140,214 L 140,132 L 178,132" fill="none" stroke="#2A3450" stroke-width="1.5" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="140" cy="173" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="140" y="177" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">2</text>
+        </g>
+
+        <!-- E3: controller → registry (image pull) — offset right from E4 so badges don't crowd -->
+        <g class="svg-edge" data-edge="E3">
+          <path class="edge-path" d="M 290,88 L 290,52" fill="none" stroke="#2A3450" stroke-width="1.5" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="302" cy="70" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="302" y="74" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">3</text>
+        </g>
+
+        <!-- E4: controller → pod (deploy + A2A proxy) -->
+        <g class="svg-edge" data-edge="E4">
+          <path class="edge-path" d="M 280,170 L 280,242" fill="none" stroke="#2A3450" stroke-width="1.5" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="270" cy="206" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="270" y="210" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">4</text>
+        </g>
+
+        <!-- E5: secret → pod (env injection) -->
+        <g class="svg-edge" data-edge="E5">
+          <path class="edge-path" d="M 412,232 L 390,232 L 390,278 L 374,278" fill="none" stroke="#2A3450" stroke-width="1.5" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="402" cy="256" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="402" y="260" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">5</text>
+        </g>
+
+        <!-- E6: A2A client → controller (request) -->
+        <g class="svg-edge" data-edge="E6">
+          <path class="edge-path" d="M 596,128 L 376,128" fill="none" stroke="#2A3450" stroke-width="1.5" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="487" cy="128" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="487" y="132" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">6</text>
+        </g>
+
+        <!-- E7: controller → A2A client (SSE stream) -->
+        <g class="svg-edge" data-edge="E7">
+          <path class="edge-path" d="M 376,148 L 596,148" fill="none" stroke="#2A3450" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="487" cy="148" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="487" y="152" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">7</text>
+        </g>
+
+        <!-- E8: pod → Gemini (LLM inference) -->
+        <g class="svg-edge" data-edge="E8">
+          <path class="edge-path" d="M 374,290 L 488,290 L 488,306 L 594,306" fill="none" stroke="#2A3450" stroke-width="1.5" marker-end="url(#arr)"/>
+          <circle class="edge-badge-circle" cx="488" cy="298" r="8" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text class="edge-badge-text" x="488" y="302" font-family="DM Mono,monospace" font-size="8" fill="#4A5672" text-anchor="middle">8</text>
+        </g>
+
+        <!-- ═══════════════ NODES ═══════════════ -->
+
+        <!-- Developer workstation (outside cluster) -->
+        <g class="svg-node" data-node="dev">
+          <rect class="node-bg" x="10" y="178" width="112" height="66" rx="7" fill="#151927" stroke="#2A3450" stroke-width="1"/>
+          <rect x="10" y="186" width="3" height="50" rx="1" fill="#4A5672"/>
+          <text x="22" y="200" font-family="Figtree,sans-serif" font-size="11.5" font-weight="600" fill="#FFFFFF">developer</text>
+          <text x="22" y="215" font-family="DM Sans,sans-serif" font-size="10" fill="#8892A4">workstation</text>
+          <!-- chip: kubectl -->
+          <rect x="22" y="222" width="42" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="26" y="232" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">kubectl</text>
+          <!-- chip: docker -->
+          <rect x="68" y="222" width="38" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="72" y="232" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">docker</text>
+        </g>
+
+        <!-- Container registry (outside cluster, top) -->
+        <g class="svg-node" data-node="registry">
+          <rect class="node-bg" x="264" y="4" width="184" height="48" rx="7" fill="#151927" stroke="#2A3450" stroke-width="1"/>
+          <rect x="264" y="12" width="3" height="32" rx="1" fill="#4A5672"/>
+          <text x="276" y="23" font-family="Figtree,sans-serif" font-size="11.5" font-weight="600" fill="#FFFFFF">container registry</text>
+          <text x="276" y="36" font-family="DM Sans,sans-serif" font-size="10" fill="#8892A4">ghcr.io · OCI image store</text>
+          <!-- chip -->
+          <rect x="276" y="40" width="42" height="9" rx="2" fill="#1C2235"/>
+          <text x="280" y="48" font-family="DM Mono,monospace" font-size="7.5" fill="#6A7A9A">:latest</text>
+        </g>
+
+        <!-- kagent-controller (inside namespace) -->
+        <g class="svg-node" data-node="controller">
+          <rect class="node-bg" x="186" y="88" width="190" height="82" rx="7" fill="#151927" stroke="#2A3450" stroke-width="1"/>
+          <rect x="186" y="96" width="3" height="66" rx="1" fill="#8A3FFC"/>
+          <text x="198" y="109" font-family="Figtree,sans-serif" font-size="11.5" font-weight="600" fill="#FFFFFF">kagent-controller</text>
+          <text x="198" y="124" font-family="DM Sans,sans-serif" font-size="10" fill="#8892A4">control plane · A2A gateway</text>
+          <!-- chips -->
+          <rect x="198" y="131" width="36" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="202" y="141" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC">:8083</text>
+          <rect x="240" y="131" width="84" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="244" y="141" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">svc/kagent-ctrl</text>
+          <!-- Policy block -->
+          <rect x="198" y="150" width="130" height="14" rx="2" fill="#0F1422" stroke="#1E2844" stroke-width="1"/>
+          <text x="202" y="160" font-family="DM Mono,monospace" font-size="7.5" fill="#4A5672">kind: Agent · type: BYO</text>
+        </g>
+
+        <!-- basic-agent pod (inside namespace) -->
+        <g class="svg-node" data-node="pod">
+          <rect class="node-bg" x="186" y="242" width="188" height="82" rx="7" fill="#151927" stroke="#2A3450" stroke-width="1"/>
+          <rect x="186" y="250" width="3" height="66" rx="1" fill="#8A3FFC"/>
+          <text x="198" y="263" font-family="Figtree,sans-serif" font-size="11.5" font-weight="600" fill="#FFFFFF">basic-agent</text>
+          <text x="198" y="278" font-family="DM Sans,sans-serif" font-size="10" fill="#8892A4">BYO pod · Google ADK</text>
+          <!-- chips -->
+          <rect x="198" y="285" width="36" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="202" y="295" font-family="DM Mono,monospace" font-size="8.5" fill="#8A3FFC">:8080</text>
+          <rect x="240" y="285" width="54" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="244" y="295" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">type: BYO</text>
+          <!-- cmd chip -->
+          <rect x="198" y="304" width="120" height="14" rx="2" fill="#0F1422" stroke="#1E2844" stroke-width="1"/>
+          <text x="202" y="314" font-family="DM Mono,monospace" font-size="7.5" fill="#4A5672">kagent-adk run basic :8080</text>
+        </g>
+
+        <!-- Secret (inside namespace) -->
+        <g class="svg-node" data-node="secret">
+          <rect class="node-bg" x="412" y="202" width="144" height="60" rx="7" fill="#151927" stroke="#2A3450" stroke-width="1"/>
+          <rect x="412" y="210" width="3" height="44" rx="1" fill="#3D5A9A"/>
+          <text x="424" y="222" font-family="Figtree,sans-serif" font-size="11.5" font-weight="600" fill="#FFFFFF">kagent-google</text>
+          <text x="424" y="236" font-family="DM Sans,sans-serif" font-size="10" fill="#8892A4">Secret · kagent ns</text>
+          <!-- chip -->
+          <rect x="424" y="243" width="102" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="428" y="253" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">GOOGLE_API_KEY</text>
+        </g>
+
+        <!-- A2A client (outside cluster, right) -->
+        <g class="svg-node" data-node="client">
+          <rect class="node-bg" x="600" y="104" width="114" height="66" rx="7" fill="#151927" stroke="#2A3450" stroke-width="1"/>
+          <rect x="600" y="112" width="3" height="50" rx="1" fill="#4A5672"/>
+          <text x="612" y="126" font-family="Figtree,sans-serif" font-size="11.5" font-weight="600" fill="#FFFFFF">A2A client</text>
+          <text x="612" y="140" font-family="DM Sans,sans-serif" font-size="10" fill="#8892A4">CLI · UI · agent</text>
+          <!-- chips -->
+          <rect x="612" y="147" width="30" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="616" y="157" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">SSE</text>
+          <rect x="646" y="147" width="32" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="650" y="157" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">JSON</text>
+        </g>
+
+        <!-- Google Gemini (outside cluster, right) -->
+        <g class="svg-node" data-node="gemini">
+          <rect class="node-bg" x="600" y="272" width="114" height="66" rx="7" fill="#151927" stroke="#2A3450" stroke-width="1"/>
+          <rect x="600" y="280" width="3" height="50" rx="1" fill="#4A5672"/>
+          <text x="612" y="294" font-family="Figtree,sans-serif" font-size="11.5" font-weight="600" fill="#FFFFFF">Google Gemini</text>
+          <text x="612" y="308" font-family="DM Sans,sans-serif" font-size="10" fill="#8892A4">LLM provider</text>
+          <!-- chips -->
+          <rect x="612" y="315" width="82" height="14" rx="2" fill="#1C2235" stroke="#2A3450" stroke-width="1"/>
+          <text x="616" y="325" font-family="DM Mono,monospace" font-size="8.5" fill="#6A7A9A">GOOGLE_API_KEY</text>
+        </g>
+
+      </svg>
+    </div><!-- diagram-wrap -->
+  </div><!-- canvas -->
+
+  <!-- ── RIGHT PANEL ── -->
+  <div class="panel">
+    <div class="panel-ctrl">
+      <span class="ctrl-label">steps</span>
+      <button class="btn-reset" id="btnReset">Show all</button>
+    </div>
+    <div class="panel-steps" id="stepList"></div>
+    <div class="panel-detail" id="stepDetail">
+      <div class="detail-empty">Hover or click a step<br>to trace the flow</div>
+    </div>
+  </div>
+
+</div><!-- app -->
+
+<!-- Tweaks -->
+<button class="tweaks-btn" id="tweaksBtn">Tweaks</button>
+<div class="tweaks-panel" id="tweaksPanel">
+  <div class="tweaks-hed">Display options</div>
+  <div class="tweak-row">
+    <span class="tweak-lbl">Animate flow</span>
+    <button class="tog" id="togFlow"></button>
+  </div>
+  <div class="tweak-row">
+    <span class="tweak-lbl">Binary pattern</span>
+    <button class="tog" id="togBinary"></button>
+  </div>
+  <hr class="tweak-divider">
+  <div class="tweak-lbl-block">Jump to step</div>
+  <select class="tweak-select" id="stepJump">
+    <option value="">-- select --</option>
+  </select>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// DATA MODEL
+// ═══════════════════════════════════════════════════════
+const BYO_STEPS = [
+  {
+    id: 1,
+    title: "Build agent image",
+    summary: "Docker packages the ADK Python agent into an OCI image and pushes to registry.",
+    nodes: ["dev", "registry"],
+    edges: ["E1"],
+    lede: "The custom ADK agent lives in python/samples/adk/basic in the kagent repository. A Dockerfile wraps the Python package, builds an OCI image, and pushes it to a container registry accessible from the cluster.",
+    facts: [
+      { k: "Source dir",    v: "python/samples/adk/basic" },
+      { k: "ADK version",   v: ">=1.22.1" },
+      { k: "Registry",      v: "ghcr.io/my-org:latest" },
+      { k: "Alt registry",  v: "localhost:5001 (kind)" },
+    ],
+    code: `cd python/samples/adk/basic
+
+docker build . -t ghcr.io/my-org:latest \\
+  --build-arg DOCKER_REGISTRY=ghcr.io \\
+  --build-arg VERSION=latest \\
+  --push`
+  },
+  {
+    id: 2,
+    title: "Create LLM secret",
+    summary: "A Kubernetes Secret stores the Gemini API key for injection into the agent pod.",
+    nodes: ["dev", "secret"],
+    edges: ["E2"],
+    lede: "The BYO pod needs the Gemini API key at runtime. A Kubernetes Secret named kagent-google in the kagent namespace holds it; the Agent CR references the secret by name so kagent injects it as an environment variable.",
+    facts: [
+      { k: "Secret name",  v: "kagent-google" },
+      { k: "Namespace",    v: "kagent" },
+      { k: "Key name",     v: "GOOGLE_API_KEY" },
+      { k: "Apply method", v: "--dry-run=client | apply" },
+    ],
+    code: `export GOOGLE_API_KEY=your-api-key-here
+
+kubectl create secret generic kagent-google \\
+  -n kagent \\
+  --from-literal=GOOGLE_API_KEY=$GOOGLE_API_KEY \\
+  --dry-run=client -oyaml | kubectl apply -f -`
+  },
+  {
+    id: 3,
+    title: "Apply Agent CR",
+    summary: "The Agent custom resource with type: BYO registers the containerised agent with kagent.",
+    nodes: ["dev", "controller"],
+    edges: ["E2"],
+    lede: "The Agent CR is the single declarative artifact a platform engineer applies. The spec.type: BYO field signals kagent-controller to manage the pod lifecycle rather than running its own declarative agent runtime. The image, command, args, and environment are declared inline.",
+    facts: [
+      { k: "apiVersion",  v: "kagent.dev/v1alpha2" },
+      { k: "kind",        v: "Agent" },
+      { k: "spec.type",   v: "BYO" },
+      { k: "Image",       v: "gcr.io/solo-public/docs/test-byo-agent:latest" },
+      { k: "cmd",         v: "kagent-adk" },
+      { k: "args",        v: "run basic --host 0.0.0.0 --port 8080" },
+    ],
+    code: `apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: basic-agent
+  namespace: kagent
+spec:
+  description: This agent can roll a die and determine if a number is prime.
+  type: BYO
+  byo:
+    deployment:
+      image: gcr.io/solo-public/docs/test-byo-agent:latest
+      cmd: "kagent-adk"
+      args: ["run", "basic", "--host", "0.0.0.0", "--port", "8080"]
+      env:
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kagent-google
+              key: GOOGLE_API_KEY
+        - name: ADK_ALLOW_WIP_FEATURES
+          value: "true"`
+  },
+  {
+    id: 4,
+    title: "Controller reconciliation",
+    summary: "kagent-controller pulls the image, creates a Deployment and Service, and mounts the secret.",
+    nodes: ["controller", "registry", "pod", "secret"],
+    edges: ["E3", "E4", "E5"],
+    lede: "Once the Agent CR is present, kagent-controller reconciles it: pulls the image from the registry, creates a Deployment for the BYO pod, and creates a corresponding Service. The secret reference causes the Gemini API key to be injected as an environment variable into the pod.",
+    facts: [
+      { k: "Agent port",  v: "8080 (BYO pod)" },
+      { k: "A2A port",    v: "8083 (controller svc)" },
+      { k: "Env injected", v: "GOOGLE_API_KEY" },
+      { k: "WIP flag",    v: "ADK_ALLOW_WIP_FEATURES=true" },
+    ],
+    code: `# Verify reconciliation:
+kubectl get agent -n kagent basic-agent
+kubectl get deployment -n kagent basic-agent
+kubectl get svc -n kagent basic-agent
+
+# Expected status:
+# NAME          READY   ...
+# basic-agent   True`
+  },
+  {
+    id: 5,
+    title: "Agent card discovery",
+    summary: "A2A clients fetch the well-known agent.json to discover capabilities before sending tasks.",
+    nodes: ["client", "controller"],
+    edges: ["E6"],
+    lede: "The A2A protocol requires callers to fetch an agent card from the well-known endpoint before submitting tasks. The URL follows the pattern /api/a2a/{namespace}/{agent-name}/.well-known/agent.json — all routed through kagent-controller on port 8083.",
+    facts: [
+      { k: "Method",       v: "GET" },
+      { k: "Path",         v: "/api/a2a/kagent/basic-agent/.well-known/agent.json" },
+      { k: "Port",         v: "8083 (kagent-controller)" },
+      { k: "Protocol ver", v: "0.2.6" },
+      { k: "Streaming",    v: "true" },
+    ],
+    code: `kubectl port-forward svc/kagent-controller 8083:8083 -n kagent
+
+curl localhost:8083/api/a2a/kagent/basic-agent/.well-known/agent.json
+
+# Response:
+{
+  "name": "basic_agent",
+  "description": "This agent can roll a die and determine if a number is prime.",
+  "url": "http://127.0.0.1:8083/api/a2a/kagent/basic-agent/",
+  "version": "",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "stateTransitionHistory": true
+  },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": []
+}`
+  },
+  {
+    id: 6,
+    title: "A2A task dispatch",
+    summary: "The client submits a task payload; the controller proxies it to the BYO pod over A2A.",
+    nodes: ["client", "controller", "pod"],
+    edges: ["E6", "E4"],
+    lede: "Task dispatch can use the kagent CLI, the dashboard UI, or any A2A-compatible host CLI. The controller receives the task on :8083 and proxies it to the BYO pod on :8080 using the same A2A protocol. The controller acts as a transparent A2A gateway.",
+    facts: [
+      { k: "Method",      v: "POST" },
+      { k: "Path",        v: "/api/a2a/kagent/basic-agent/" },
+      { k: "Payload kind", v: "task" },
+      { k: "Input mode",  v: "text" },
+      { k: "CLI flag",    v: "--agent basic-agent" },
+    ],
+    code: `# kagent CLI:
+kagent invoke --agent basic-agent --task "Roll a die with 6 sides"
+
+# A2A host CLI:
+cd a2a-samples/samples/python/hosts/cli
+uv run . --agent http://127.0.0.1:8083/api/a2a/kagent/basic-agent
+
+# Prompt at CLI:
+# What do you want to send to the agent? (:q or quit to exit):`
+  },
+  {
+    id: 7,
+    title: "LLM inference",
+    summary: "The ADK agent calls the Gemini API with the task prompt and tool definitions.",
+    nodes: ["pod", "gemini"],
+    edges: ["E8"],
+    lede: "Inside the BYO pod, the ADK runtime processes the A2A task. The root_agent is configured with the Gemini model and tool functions (roll_die, check_prime). The ADK framework handles the Gemini API call, tool dispatch, and result assembly.",
+    facts: [
+      { k: "Model",       v: "gemini-2.0-flash" },
+      { k: "ADK app",     v: "kagent__NS__basic_agent" },
+      { k: "Secret ref",  v: "kagent-google → GOOGLE_API_KEY" },
+      { k: "Tools",       v: "roll_die · check_prime" },
+    ],
+    code: `# python/samples/adk/basic/agent.py
+from google.adk.agents import Agent
+from kagent.adk import KAgentApp
+import os
+
+root_agent = Agent(
+    model="gemini-2.0-flash",
+    name="hello_world_agent",
+    description="Agent to demonstrate tool use.",
+    tools=[roll_die, check_prime],
+)
+
+app = KAgentApp(
+    root_agent=root_agent,
+    agent_card=agent_card,
+    kagent_url=os.getenv(
+        "KAGENT_URL",
+        "http://kagent-controller.kagent.svc.cluster.local:8083"
+    ),
+    app_name="basic_agent",
+)`
+  },
+  {
+    id: 8,
+    title: "Streaming response",
+    summary: "The controller relays SSE status-update events back to the caller as the agent produces output.",
+    nodes: ["client", "controller"],
+    edges: ["E7"],
+    lede: "Responses are streamed as a sequence of A2A status-update events over SSE. Each event carries a contextId, taskId, and message parts. The final event has final: true. The controller relays these from the BYO pod to the original caller without buffering.",
+    facts: [
+      { k: "Event kind",  v: "status-update" },
+      { k: "State seq",   v: "working → completed" },
+      { k: "Transport",   v: "SSE (text/event-stream)" },
+      { k: "Streaming",   v: "capabilities.streaming: true" },
+    ],
+    code: `{
+  "contextId": "157a0834df2c459d9cee45316ffbfb5b",
+  "final": false,
+  "kind": "status-update",
+  "metadata": {
+    "adk_app_name": "kagent__NS__basic_agent",
+    "adk_author": "hello_world_agent",
+    "adk_session_id": "157a0834df2c459d9cee45316ffbfb5b"
+  },
+  "status": {
+    "message": {
+      "kind": "message",
+      "parts": [{ "kind": "text", "text": "I rolled a 6-sided die and got a 5.\\n" }],
+      "role": "agent"
+    },
+    "state": "working",
+    "timestamp": "2025-08-14T22:15:04.276358+00:00"
+  },
+  "taskId": "59d2b071-04e9-4fef-a0dd-e925dd13cceb"
+}`
+  }
+];
+
+// ═══════════════════════════════════════════════════════
+// INTERACTIVITY
+// ═══════════════════════════════════════════════════════
+let activeStep = null;
+let pinned = false;
+
+function renderStepList() {
+  const list = document.getElementById('stepList');
+  list.innerHTML = '';
+  BYO_STEPS.forEach(step => {
+    const row = document.createElement('div');
+    row.className = 'step-row';
+    row.dataset.id = step.id;
+    row.innerHTML = `
+      <div class="step-num">${step.id}</div>
+      <div class="step-text">
+        <div class="step-title">${step.title}</div>
+        <div class="step-summary">${step.summary}</div>
+      </div>`;
+    row.addEventListener('mouseenter', () => { if (!pinned) activateStep(step.id); });
+    row.addEventListener('mouseleave', () => { if (!pinned) clearStep(); });
+    row.addEventListener('click', () => {
+      if (pinned && activeStep === step.id) {
+        pinned = false; clearStep();
+      } else {
+        pinned = true; activateStep(step.id);
+      }
+    });
+    list.appendChild(row);
+  });
+}
+
+function activateStep(id) {
+  activeStep = id;
+  const step = BYO_STEPS.find(s => s.id === id);
+
+  // Update step rows
+  document.querySelectorAll('.step-row').forEach(r => {
+    r.classList.toggle('active', parseInt(r.dataset.id) === id);
+  });
+
+  // Dim all nodes + edges
+  document.querySelectorAll('.svg-node, .svg-edge').forEach(el => {
+    el.classList.add('dimmed');
+    el.classList.remove('active');
+  });
+
+  // Activate referenced nodes
+  step.nodes.forEach(nodeId => {
+    const el = document.querySelector(`.svg-node[data-node="${nodeId}"]`);
+    if (el) { el.classList.remove('dimmed'); el.classList.add('active'); }
+  });
+
+  // Activate referenced edges
+  step.edges.forEach(edgeId => {
+    const el = document.querySelector(`.svg-edge[data-edge="${edgeId}"]`);
+    if (el) {
+      el.classList.remove('dimmed'); el.classList.add('active');
+      // Swap arrowhead marker to purple
+      const path = el.querySelector('.edge-path');
+      if (path) path.setAttribute('marker-end', 'url(#arr-a)');
+    }
+  });
+
+  renderDetail(step);
+}
+
+function clearStep() {
+  activeStep = null;
+  document.querySelectorAll('.step-row').forEach(r => r.classList.remove('active'));
+  document.querySelectorAll('.svg-node, .svg-edge').forEach(el => {
+    el.classList.remove('dimmed', 'active');
+  });
+  // Reset edge arrow markers
+  document.querySelectorAll('.svg-edge .edge-path').forEach(p => {
+    p.setAttribute('marker-end', 'url(#arr)');
+  });
+  document.getElementById('stepDetail').innerHTML =
+    '<div class="detail-empty">Hover or click a step<br>to trace the flow</div>';
+}
+
+function renderDetail(step) {
+  const factsHtml = step.facts.map(f =>
+    `<div class="fact-row"><div class="fact-k">${f.k}</div><div class="fact-v">${f.v}</div></div>`
+  ).join('');
+  document.getElementById('stepDetail').innerHTML = `
+    <div class="detail-title">${step.title}</div>
+    <div class="detail-lede">${step.lede}</div>
+    <div class="detail-facts">${factsHtml}</div>
+    <div class="code-label">manifest · config</div>
+    <div class="code-block"><pre>${escHtml(step.code)}</pre></div>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// SVG node hover
+document.querySelectorAll('.svg-node').forEach(node => {
+  node.style.cursor = 'pointer';
+  node.addEventListener('mouseenter', () => {
+    if (pinned) return;
+    const nid = node.dataset.node;
+    const step = BYO_STEPS.find(s => s.nodes.includes(nid));
+    if (step) activateStep(step.id);
+  });
+  node.addEventListener('mouseleave', () => { if (!pinned) clearStep(); });
+  node.addEventListener('click', () => {
+    const nid = node.dataset.node;
+    const step = BYO_STEPS.find(s => s.nodes.includes(nid));
+    if (!step) return;
+    if (pinned && activeStep === step.id) { pinned = false; clearStep(); }
+    else { pinned = true; activateStep(step.id); }
+  });
+});
+
+// SVG edge hover
+document.querySelectorAll('.svg-edge').forEach(edge => {
+  edge.style.cursor = 'pointer';
+  edge.addEventListener('mouseenter', () => {
+    if (pinned) return;
+    const eid = edge.dataset.edge;
+    const step = BYO_STEPS.find(s => s.edges.includes(eid));
+    if (step) activateStep(step.id);
+  });
+  edge.addEventListener('mouseleave', () => { if (!pinned) clearStep(); });
+  edge.addEventListener('click', () => {
+    const eid = edge.dataset.edge;
+    const step = BYO_STEPS.find(s => s.edges.includes(eid));
+    if (!step) return;
+    if (pinned && activeStep === step.id) { pinned = false; clearStep(); }
+    else { pinned = true; activateStep(step.id); }
+  });
+});
+
+// Reset button
+document.getElementById('btnReset').addEventListener('click', () => {
+  pinned = false; clearStep();
+});
+
+// ═══════════════════════════════════════════════════════
+// TWEAKS PANEL
+// ═══════════════════════════════════════════════════════
+const tweaksBtn = document.getElementById('tweaksBtn');
+const tweaksPanel = document.getElementById('tweaksPanel');
+tweaksBtn.addEventListener('click', () => tweaksPanel.classList.toggle('open'));
+document.addEventListener('click', e => {
+  if (!tweaksPanel.contains(e.target) && e.target !== tweaksBtn) tweaksPanel.classList.remove('open');
+});
+
+// Animate flow toggle
+const togFlow = document.getElementById('togFlow');
+togFlow.addEventListener('click', () => {
+  togFlow.classList.toggle('on');
+  document.body.classList.toggle('animate-flow', togFlow.classList.contains('on'));
+});
+
+// Binary pattern toggle
+const togBinary = document.getElementById('togBinary');
+const binaryBg = document.getElementById('binaryBg');
+function genBinary() {
+  if (binaryBg.textContent.length > 2000) return;
+  let s = '';
+  for (let i = 0; i < 3000; i++) s += Math.random() > 0.5 ? '1' : '0';
+  binaryBg.textContent = s;
+}
+togBinary.addEventListener('click', () => {
+  togBinary.classList.toggle('on');
+  const on = togBinary.classList.contains('on');
+  if (on) genBinary();
+  binaryBg.classList.toggle('vis', on);
+});
+
+// Step jump select
+const stepJump = document.getElementById('stepJump');
+BYO_STEPS.forEach(s => {
+  const opt = document.createElement('option');
+  opt.value = s.id;
+  opt.textContent = `${s.id} · ${s.title}`;
+  stepJump.appendChild(opt);
+});
+stepJump.addEventListener('change', () => {
+  const v = parseInt(stepJump.value);
+  if (!v) return;
+  pinned = true;
+  activateStep(v);
+  stepJump.value = '';
+  tweaksPanel.classList.remove('open');
+});
+
+// Initialise
+renderStepList();
+</script>
+</body>
+</html>
