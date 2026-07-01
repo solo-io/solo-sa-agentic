@@ -429,7 +429,7 @@ we get a successful response:
 First, remove the `EnterpriseAgentgatewayPolicy` resources that were in the previous step. The deployed agent is not configured to use the example tokens:
 
 ```bash
-kubectl delete EnterpriseAgentgatewayPolicy jwt public-mcp-tool-access -n agentgateway-system
+kubectl delete EnterpriseAgentgatewayPolicy jwt mcp-tool-access -n agentgateway-system
 ```
 
 ```bash
