@@ -18,7 +18,7 @@ kubectl get deploy -n agentgateway-system | grep waf-server
 
 ## WAF For AI Workloads
 
-For AI traffic, traditional WAF rules are useful at the HTTP layer, but semantic AI protection should use Agent Gateway AI guardrails.
+For AI traffic, traditional WAF rules are useful at the HTTP layer, but semantic AI protection should use agentgateway AI guardrails.
 
 Use WAF for:
 
@@ -495,7 +495,7 @@ spec:
         value: application/json
       - name: x-waf-action
         value: blocked
-    body: '{"message":"blocked by Agent Gateway WAF"}'
+    body: '{"message":"blocked by agentgateway WAF"}'
 ```
 
 Apply and test it:
