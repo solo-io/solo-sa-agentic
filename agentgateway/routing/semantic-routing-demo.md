@@ -55,7 +55,8 @@ One `EnterpriseAgentgatewayBackend` per model tier, plus one failover backend us
 | `claude-sonnet` | `claude-sonnet-5` | cheaper default for everything else |
 | `gpt-5-mini` | `gpt-5-mini` | cheap OpenAI tier; weighted split and failover fallback |
 
-```yaml
+```bash
+kubectl apply -f - <<EOF
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayBackend
 metadata:
@@ -143,6 +144,7 @@ spec:
           auth:
             secretRef:
               name: openai-secret
+EOF
 ```
 
 The `model` field on the provider overrides whatever model the client sends. The backend *is* the model choice, which is what lets the route decide.
@@ -157,7 +159,8 @@ Three "virtual models", one hostname each:
 | `fast.demo.internal` | weighted 80/20 split: claude-sonnet-5 / gpt-5-mini |
 | `resilient.demo.internal` | priority-group failover backend |
 
-```yaml
+```bash
+kubectl apply -f - <<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -263,13 +266,15 @@ spec:
     - group: enterpriseagentgateway.solo.io
       kind: EnterpriseAgentgatewayBackend
       name: resilient-failover
+EOF
 ```
 
 ## Step 4: PreRouting intent classifier
 
 This is the piece that makes it "semantic". `phase: PreRouting` runs the transformation *before* the HTTPRoute match, so the header it sets participates in routing. The CEL below respects a client-supplied `x-intent` and otherwise derives intent from the prompt content:
 
-```yaml
+```bash
+kubectl apply -f - <<EOF
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayPolicy
 metadata:
@@ -290,6 +295,7 @@ spec:
             "x-intent" in request.headers ? request.headers["x-intent"] :
             (json(request.body).messages.exists(m, m.content.contains("code") || m.content.contains("function")) ? "code" :
             (json(request.body).messages.exists(m, m.content.contains("prove") || m.content.contains("theorem")) ? "deep-reasoning" : "general"))
+EOF
 ```
 
 Keyword CEL is deliberately simple; it's a stand-in for the classifier. The same PreRouting slot accepts an `extProc` policy instead, which is how you plug in a real semantic classifier (see [the ladder](#from-keyword-cel-to-true-semantic-routing)).
