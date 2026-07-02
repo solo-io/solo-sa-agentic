@@ -53,6 +53,7 @@ One `EnterpriseAgentgatewayBackend` per model tier, plus one failover backend us
 | `claude-opus` | `claude-opus-4-8` | expensive; only for requests that need it (code) |
 | `gpt-5-5` | `gpt-5.5` | expensive; deep reasoning |
 | `claude-sonnet` | `claude-sonnet-5` | cheaper default for everything else |
+| `gpt-5-mini` | `gpt-5-mini` | cheap OpenAI tier; weighted split and failover fallback |
 
 ```yaml
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
@@ -100,6 +101,21 @@ spec:
       secretRef:
         name: openai-secret
 ---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata:
+  name: gpt-5-mini
+  namespace: semantic-routing
+spec:
+  ai:
+    provider:
+      openai:
+        model: gpt-5-mini
+  policies:
+    auth:
+      secretRef:
+        name: openai-secret
+---
 # Failover: group order = priority. If every provider in the first group is
 # degraded, traffic shifts to the next group. Within a group, providers are
 # weighted automatically by health.
@@ -120,9 +136,9 @@ spec:
             secretRef:
               name: anthropic-secret
     - providers:
-      - name: fallback-gpt-5-5
+      - name: fallback-gpt-5-mini
         openai:
-          model: gpt-5.5
+          model: gpt-5-mini
         policies:
           auth:
             secretRef:
@@ -138,7 +154,7 @@ Three "virtual models", one hostname each:
 | Hostname | Behavior |
 |---|---|
 | `smart.demo.internal` | intent-based: `x-intent: code` → claude-opus-4-8, `x-intent: deep-reasoning` → gpt-5.5, default → claude-sonnet-5 (cheaper) |
-| `fast.demo.internal` | weighted 80/20 split: claude-sonnet-5 / gpt-5.5 |
+| `fast.demo.internal` | weighted 80/20 split: claude-sonnet-5 / gpt-5-mini |
 | `resilient.demo.internal` | priority-group failover backend |
 
 ```yaml
@@ -224,7 +240,7 @@ spec:
       weight: 80
     - group: enterpriseagentgateway.solo.io
       kind: EnterpriseAgentgatewayBackend
-      name: gpt-5-5
+      name: gpt-5-mini
       weight: 20
 ---
 # "resilient": health-based failover via the priority-group backend.
@@ -329,7 +345,7 @@ for i in $(seq 1 10); do
 done | sort | uniq -c
 ```
 
-Failover serves from `claude-sonnet-5` (priority group 0) while healthy, shifting to `gpt-5.5` if Anthropic degrades:
+Failover serves from `claude-sonnet-5` (priority group 0) while healthy, shifting to `gpt-5-mini` if Anthropic degrades:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
