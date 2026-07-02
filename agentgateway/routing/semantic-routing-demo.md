@@ -8,9 +8,7 @@ Enterprise agentgateway does not ship a first-party embedding-based semantic cla
 - **`HTTPRoute`**: weighted splits and header-based routing across AI backends.
 - **`EnterpriseAgentgatewayPolicy`** with **`phase: PreRouting`**: transformation (CEL) or `extProc` that runs *before* route selection, so a derived intent header can drive the routing decision.
 
-The pattern: a PreRouting policy classifies the request and sets `x-intent`; the HTTPRoute matches on `x-intent` and steers to the right model backend. Swap the CEL classifier for an `extProc` server and the same wiring becomes true semantic routing.
-
-> **Note on virtual models:** agentgateway's `llm.virtualModels` (weighted/failover/conditional model routing) is a standalone config-file feature today; the Kubernetes XDS path does not populate the model router. This demo uses the K8s-native equivalents: weighted `backendRefs`, `ai.groups` priority failover, and PreRouting + header matching for conditional routing.
+The pattern: a PreRouting policy classifies the request and sets `x-intent`; the HTTPRoute matches on `x-intent` and steers to the right model backend. Swap the CEL classifier for an `extProc` server and the same wiring becomes true semantic routing.x
 
 ## Quick Vocab
 
