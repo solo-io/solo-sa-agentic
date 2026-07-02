@@ -1,22 +1,22 @@
 # Semantic Model Routing With Enterprise Agentgateway
 
-Route LLM traffic to the *right* model per request — cheap models for simple prompts, frontier models for code or deep reasoning — using enterprise agentgateway on Kubernetes. Clients call one stable endpoint; the gateway classifies the request and picks the concrete model.
+Route LLM traffic to the *right* model per request (cheap models for simple prompts, frontier models for code or deep reasoning) using enterprise agentgateway on Kubernetes. Clients call one stable endpoint; the gateway classifies the request and picks the concrete model.
 
 Enterprise agentgateway does not ship a first-party embedding-based semantic classifier. What it ships is the routing machinery:
 
-- **`AgentgatewayBackend`** with an `ai` spec — one backend per model, or **priority groups** for health-based failover.
-- **`HTTPRoute`** — weighted splits and header-based routing across AI backends.
-- **`EnterpriseAgentgatewayPolicy`** with **`phase: PreRouting`** — transformation (CEL) or `extProc` that runs *before* route selection, so a derived intent header can drive the routing decision.
+- **`AgentgatewayBackend`** with an `ai` spec: one backend per model, or **priority groups** for health-based failover.
+- **`HTTPRoute`**: weighted splits and header-based routing across AI backends.
+- **`EnterpriseAgentgatewayPolicy`** with **`phase: PreRouting`**: transformation (CEL) or `extProc` that runs *before* route selection, so a derived intent header can drive the routing decision.
 
 The pattern: a PreRouting policy classifies the request and sets `x-intent`; the HTTPRoute matches on `x-intent` and steers to the right model backend. Swap the CEL classifier for an `extProc` server and the same wiring becomes true semantic routing.
 
-> **Note on virtual models:** agentgateway's `llm.virtualModels` (weighted/failover/conditional model routing) is a standalone config-file feature today — the Kubernetes XDS path does not populate the model router. This demo uses the K8s-native equivalents: weighted `backendRefs`, `ai.groups` priority failover, and PreRouting + header matching for conditional routing.
+> **Note on virtual models:** agentgateway's `llm.virtualModels` (weighted/failover/conditional model routing) is a standalone config-file feature today; the Kubernetes XDS path does not populate the model router. This demo uses the K8s-native equivalents: weighted `backendRefs`, `ai.groups` priority failover, and PreRouting + header matching for conditional routing.
 
 ## Quick Vocab
 
 - **`AgentgatewayBackend`** (`agentgateway.dev/v1alpha1`): an LLM backend. `spec.ai.provider.<anthropic|openai|gemini|bedrock|...>` with optional `model` override; `spec.policies.auth.secretRef` for credentials. `spec.ai.groups` instead of `provider` gives priority-ordered provider groups.
 - **`EnterpriseAgentgatewayPolicy`** (`enterpriseagentgateway.solo.io/v1alpha1`): attaches traffic policies to a Gateway/route. `spec.traffic.phase: PreRouting` runs the policy before route selection (default is `PostRouting`).
-- **Transformation**: `spec.traffic.transformation.request.set` — set request headers from CEL expressions (request headers, JWT claims, or the request body via `json(request.body)`).
+- **Transformation**: `spec.traffic.transformation.request.set` sets request headers from CEL expressions (request headers, JWT claims, or the request body via `json(request.body)`).
 - **Priority groups**: within a group, providers are weighted automatically by health; if a whole group degrades, traffic shifts to the next group.
 
 ## Prerequisites
@@ -31,7 +31,7 @@ kubectl get crd agentgatewaybackends.agentgateway.dev enterpriseagentgatewaypoli
 - An Anthropic API key and an OpenAI API key
 - `curl` and `jq`
 
-## Step 1 — Namespace and provider secrets
+## Step 1: Namespace and provider secrets
 
 The default Secret resolver requires the API key under the `Authorization` key.
 
@@ -70,7 +70,7 @@ kubectl create secret generic openai-secret -n semantic-routing \
   --from-literal=Authorization="$OPENAI_API_KEY"
 ```
 
-## Step 2 — Model backends
+## Step 2: Model backends
 
 One `AgentgatewayBackend` per model tier, plus one failover backend using priority groups.
 
@@ -164,9 +164,9 @@ spec:
               name: anthropic-secret
 ```
 
-The `model` field on the provider overrides whatever model the client sends — the backend *is* the model choice, which is what lets the route decide.
+The `model` field on the provider overrides whatever model the client sends. The backend *is* the model choice, which is what lets the route decide.
 
-## Step 3 — Gateway and routes
+## Step 3: Gateway and routes
 
 Three "virtual models", one hostname each:
 
@@ -284,7 +284,7 @@ spec:
       name: resilient-failover
 ```
 
-## Step 4 — PreRouting intent classifier
+## Step 4: PreRouting intent classifier
 
 This is the piece that makes it "semantic". `phase: PreRouting` runs the transformation *before* the HTTPRoute match, so the header it sets participates in routing. The CEL below respects a client-supplied `x-intent` and otherwise derives intent from the prompt content:
 
@@ -311,11 +311,11 @@ spec:
             (json(request.body).messages.exists(m, m.content.contains("prove") || m.content.contains("theorem")) ? "deep-reasoning" : "general"))
 ```
 
-Keyword CEL is deliberately simple — it's a stand-in for the classifier. The same PreRouting slot accepts an `extProc` policy instead, which is how you plug in a real semantic classifier (see [the ladder](#from-keyword-cel-to-true-semantic-routing)).
+Keyword CEL is deliberately simple; it's a stand-in for the classifier. The same PreRouting slot accepts an `extProc` policy instead, which is how you plug in a real semantic classifier (see [the ladder](#from-keyword-cel-to-true-semantic-routing)).
 
 This mirrors the pattern enterprise agentgateway uses in its own e2e suite: a PreRouting policy sets a header from a JWT claim (`jwt.tier`) and the HTTPRoute routes premium users to a different backend (`ent-controller/test/e2e/features/agentgateway/policies/testdata/jwt-transform-routing-policy.yaml`).
 
-## Step 5 — Verify status
+## Step 5: Verify status
 
 ```bash
 kubectl get agentgatewaybackends,httproutes,gateway -n semantic-routing
@@ -324,7 +324,7 @@ kubectl get enterpriseagentgatewaypolicy intent-classifier -n semantic-routing
 
 Expect every backend `ACCEPTED: True`, the Gateway `PROGRAMMED: True` (a proxy pod and a LoadBalancer Service appear in the namespace), and the policy `ACCEPTED: True / ATTACHED: True`.
 
-## Step 6 — Send traffic
+## Step 6: Send traffic
 
 Port-forward (or use the LoadBalancer address once assigned):
 
@@ -332,7 +332,7 @@ Port-forward (or use the LoadBalancer address once assigned):
 kubectl port-forward -n semantic-routing svc/semantic-routing 8080:8080 &
 ```
 
-Intent-based routing — same endpoint, different models:
+Intent-based routing: same endpoint, different models.
 
 ```bash
 # Explicit intent header -> claude-sonnet
@@ -364,7 +364,7 @@ for i in $(seq 1 10); do
 done | sort | uniq -c
 ```
 
-Failover — serves from `gpt-5-mini` (priority group 0) while healthy:
+Failover serves from `gpt-5-mini` (priority group 0) while healthy:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
@@ -372,11 +372,11 @@ curl -s http://localhost:8080/v1/chat/completions \
   -d '{"model":"any","messages":[{"role":"user","content":"hi"}]}' | jq -r .model
 ```
 
-> **Dry-run trick (no valid keys needed):** routing happens before provider auth, so even with placeholder keys you can prove where a request landed by the provider's 401 signature — Anthropic returns `{"error":{"type":"invalid_request_error","message":"invalid x-api-key"}}`, OpenAI returns `"Incorrect API key provided: ..."`. Useful when demoing routing logic without burning tokens.
+> **Dry-run trick (no valid keys needed):** routing happens before provider auth, so even with placeholder keys you can prove where a request landed by the provider's 401 signature. Anthropic returns `{"error":{"type":"invalid_request_error","message":"invalid x-api-key"}}`, OpenAI returns `"Incorrect API key provided: ..."`. Useful when demoing routing logic without burning tokens.
 
 ## From Keyword CEL To True Semantic Routing
 
-Three rungs, all using the same HTTPRoute wiring — only the classifier changes:
+Three rungs, all using the same HTTPRoute wiring; only the classifier changes:
 
 1. **Client-declared intent**: the app sends `x-intent` itself. Zero gateway logic; you trust the caller.
 2. **Gateway CEL heuristics** (this demo): PreRouting transformation derives `x-intent` from headers, JWT claims, or `json(request.body)`. Deterministic, no extra hops, limited semantics.
