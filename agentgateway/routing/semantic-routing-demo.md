@@ -4,7 +4,7 @@ Route LLM traffic to the *right* model per request (cheap models for simple prom
 
 Enterprise agentgateway does not ship a first-party embedding-based semantic classifier. What it ships is the routing machinery:
 
-- **`AgentgatewayBackend`** with an `ai` spec: one backend per model, or **priority groups** for health-based failover.
+- **`EnterpriseAgentgatewayBackend`** with an `ai` spec: one backend per model, or **priority groups** for health-based failover.
 - **`HTTPRoute`**: weighted splits and header-based routing across AI backends.
 - **`EnterpriseAgentgatewayPolicy`** with **`phase: PreRouting`**: transformation (CEL) or `extProc` that runs *before* route selection, so a derived intent header can drive the routing decision.
 
@@ -12,7 +12,7 @@ The pattern: a PreRouting policy classifies the request and sets `x-intent`; the
 
 ## Quick Vocab
 
-- **`AgentgatewayBackend`** (`agentgateway.dev/v1alpha1`): an LLM backend. `spec.ai.provider.<anthropic|openai|gemini|bedrock|...>` with optional `model` override; `spec.policies.auth.secretRef` for credentials. `spec.ai.groups` instead of `provider` gives priority-ordered provider groups.
+- **`EnterpriseAgentgatewayBackend`** (`enterpriseagentgateway.solo.io/v1alpha1`): a backend definition. For LLMs, `spec.ai.provider.<anthropic|openai|gemini|bedrock|...>` with optional `model` override; `spec.policies.auth.secretRef` for credentials. `spec.ai.groups` instead of `provider` gives priority-ordered provider groups. The `ai` spec is identical to the OSS `AgentgatewayBackend`; the enterprise kind additionally supports `entMcp` backends and `tokenExchange`/`workloadIdentity` backend auth.
 - **`EnterpriseAgentgatewayPolicy`** (`enterpriseagentgateway.solo.io/v1alpha1`): attaches traffic policies to a Gateway/route. `spec.traffic.phase: PreRouting` runs the policy before route selection (default is `PostRouting`).
 - **Transformation**: `spec.traffic.transformation.request.set` sets request headers from CEL expressions (request headers, JWT claims, or the request body via `json(request.body)`).
 - **Priority groups**: within a group, providers are weighted automatically by health; if a whole group degrades, traffic shifts to the next group.
@@ -23,7 +23,7 @@ The pattern: a PreRouting policy classifies the request and sets `x-intent`; the
 
 ```bash
 kubectl get gatewayclass enterprise-agentgateway
-kubectl get crd agentgatewaybackends.agentgateway.dev enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io
+kubectl get crd enterpriseagentgatewaybackends.enterpriseagentgateway.solo.io enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io
 ```
 
 - An Anthropic API key and an OpenAI API key
@@ -31,36 +31,12 @@ kubectl get crd agentgatewaybackends.agentgateway.dev enterpriseagentgatewaypoli
 
 ## Step 1: Namespace and provider secrets
 
-The default Secret resolver requires the API key under the `Authorization` key.
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: semantic-routing
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: anthropic-secret
-  namespace: semantic-routing
-type: Opaque
-stringData:
-  Authorization: <your-anthropic-key>
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: openai-secret
-  namespace: semantic-routing
-type: Opaque
-stringData:
-  Authorization: <your-openai-key>
-```
-
-Prefer creating the secrets imperatively so keys never land in a file:
+The default Secret resolver requires the API key under the `Authorization` key. Export the keys as environment variables and create the Secrets imperatively so keys never land in a manifest file in plain text:
 
 ```bash
+export ANTHROPIC_API_KEY='<your-anthropic-key>'
+export OPENAI_API_KEY='<your-openai-key>'
+
 kubectl create ns semantic-routing
 kubectl create secret generic anthropic-secret -n semantic-routing \
   --from-literal=Authorization="$ANTHROPIC_API_KEY"
@@ -70,11 +46,11 @@ kubectl create secret generic openai-secret -n semantic-routing \
 
 ## Step 2: Model backends
 
-One `AgentgatewayBackend` per model tier, plus one failover backend using priority groups.
+One `EnterpriseAgentgatewayBackend` per model tier, plus one failover backend using priority groups.
 
 ```yaml
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
 metadata:
   name: claude-sonnet
   namespace: semantic-routing
@@ -88,8 +64,8 @@ spec:
       secretRef:
         name: anthropic-secret
 ---
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
 metadata:
   name: claude-haiku
   namespace: semantic-routing
@@ -103,8 +79,8 @@ spec:
       secretRef:
         name: anthropic-secret
 ---
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
 metadata:
   name: gpt-5
   namespace: semantic-routing
@@ -118,8 +94,8 @@ spec:
       secretRef:
         name: openai-secret
 ---
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
 metadata:
   name: gpt-5-mini
   namespace: semantic-routing
@@ -136,8 +112,8 @@ spec:
 # Failover: group order = priority. If every provider in the first group is
 # degraded, traffic shifts to the next group. Within a group, providers are
 # weighted automatically by health.
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayBackend
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
 metadata:
   name: resilient-failover
   namespace: semantic-routing
@@ -211,8 +187,8 @@ spec:
       - name: x-intent
         value: code
     backendRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: claude-sonnet
   - matches:
     - path:
@@ -222,16 +198,16 @@ spec:
       - name: x-intent
         value: deep-reasoning
     backendRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: gpt-5
   - matches:
     - path:
         type: PathPrefix
         value: /v1/chat/completions
     backendRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: claude-haiku
 ---
 # "fast": weighted split across two cheap models.
@@ -251,12 +227,12 @@ spec:
         type: PathPrefix
         value: /v1/chat/completions
     backendRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: claude-haiku
       weight: 80
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: gpt-5-mini
       weight: 20
 ---
@@ -277,8 +253,8 @@ spec:
         type: PathPrefix
         value: /v1/chat/completions
     backendRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: resilient-failover
 ```
 
@@ -316,7 +292,7 @@ This mirrors the pattern enterprise agentgateway uses in its own e2e suite: a Pr
 ## Step 5: Verify status
 
 ```bash
-kubectl get agentgatewaybackends,httproutes,gateway -n semantic-routing
+kubectl get enterpriseagentgatewaybackends,httproutes,gateway -n semantic-routing
 kubectl get enterpriseagentgatewaypolicy intent-classifier -n semantic-routing
 ```
 
@@ -407,7 +383,8 @@ This removes the Gateway (and its LoadBalancer), all backends, routes, policies,
 
 | What | Where |
 |---|---|
-| `AgentgatewayBackend` AI spec, priority groups, `NamedLLMProvider` | `controller/api/v1alpha1/agentgateway/agentgateway_backend_types.go` (~lines 150–260) |
+| `EnterpriseAgentgatewayBackend` spec (embeds the upstream `AIBackend`) | `ent-controller/api/v1alpha1/enterpriseagentgateway/enterprise_agentgateway_backend_types.go` (~line 46) |
+| AI spec, priority groups, `NamedLLMProvider` (upstream types) | `controller/api/v1alpha1/agentgateway/agentgateway_backend_types.go` (~lines 150–260) |
 | Backend auth (`secretRef` under `Authorization` key) | `controller/api/v1alpha1/agentgateway/agentgateway_policy_types.go` (`BackendAuth`, ~line 1308) |
 | `PreRouting` phase + allowed policies (transformation, extProc, …) | `ent-controller/api/v1alpha1/enterpriseagentgateway/enterprise_agentgateway_policy_types.go` (~line 614) |
 | PreRouting transform-then-route e2e example | `ent-controller/test/e2e/features/agentgateway/policies/testdata/jwt-transform-routing-policy.yaml` |
