@@ -132,18 +132,46 @@ spec:
       - name: primary-claude-sonnet
         anthropic:
           model: claude-sonnet-5
-        policies:
-          auth:
-            secretRef:
-              name: anthropic-secret
     - providers:
       - name: fallback-gpt-5-mini
         openai:
           model: gpt-5-mini
-        policies:
-          auth:
-            secretRef:
-              name: openai-secret
+---
+# Per-provider auth for the failover backend, attached by provider name via
+# targetRefs[].sectionName. Note: enterprise-agentgateway v2026.6.3 rejects
+# inline ai.groups[].providers[].policies.auth (a CRD validation rule that
+# predates the auth field); newer versions accept it inline.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: resilient-failover-anthropic-auth
+  namespace: semantic-routing
+spec:
+  targetRefs:
+  - group: enterpriseagentgateway.solo.io
+    kind: EnterpriseAgentgatewayBackend
+    name: resilient-failover
+    sectionName: primary-claude-sonnet
+  backend:
+    auth:
+      secretRef:
+        name: anthropic-secret
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: resilient-failover-openai-auth
+  namespace: semantic-routing
+spec:
+  targetRefs:
+  - group: enterpriseagentgateway.solo.io
+    kind: EnterpriseAgentgatewayBackend
+    name: resilient-failover
+    sectionName: fallback-gpt-5-mini
+  backend:
+    auth:
+      secretRef:
+        name: openai-secret
 EOF
 ```
 
@@ -306,10 +334,10 @@ This mirrors the pattern enterprise agentgateway uses in its own e2e suite: a Pr
 
 ```bash
 kubectl get enterpriseagentgatewaybackends,httproutes,gateway -n semantic-routing
-kubectl get enterpriseagentgatewaypolicy intent-classifier -n semantic-routing
+kubectl get enterpriseagentgatewaypolicies -n semantic-routing
 ```
 
-Expect every backend `ACCEPTED: True`, the Gateway `PROGRAMMED: True` (a proxy pod and a LoadBalancer Service appear in the namespace), and the policy `ACCEPTED: True / ATTACHED: True`.
+Expect every backend `ACCEPTED: True`, the Gateway `PROGRAMMED: True` (a proxy pod and a LoadBalancer Service appear in the namespace), and all three policies (`intent-classifier` plus the two failover auth policies) `ACCEPTED: True / ATTACHED: True`.
 
 ## Step 6: Send traffic
 
