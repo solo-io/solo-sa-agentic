@@ -1,0 +1,40 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: okta-client-creds
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: httpbin-route
+  traffic:
+    extAuth:
+      backendRef:
+        group: agentgateway.dev
+        kind: AgentgatewayBackend
+        name: okta-token
+      cache:
+        key:
+        - '"client-credentials:api.access"'
+        ttl: extauthz.expires - 5
+        maxEntries: 1024
+      http:
+        path: '"/oauth2/default/v1/token"'
+        addRequestHeaders:
+          content-type: '"application/x-www-form-urlencoded"'
+          authorization: '"Basic " + base64.encode("<OKTA_CLIENT_ID>:<OKTA_CLIENT_SECRET>")'
+          :method: '"POST"'
+        body: |
+          form.encode({
+            "grant_type": "client_credentials",
+            "scope": "api.access"
+          })
+        responseMetadata:
+          token: json(response.body).access_token
+          expires: unvalidatedJwtPayload(json(response.body).access_token).exp
+    transformation:
+      request:
+        set:
+        - name: authorization
+          value: '"Bearer " + extauthz.token'
