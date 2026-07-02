@@ -1,6 +1,6 @@
 # Semantic Model Routing With Enterprise Agentgateway
 
-Route LLM traffic to the *right* model per request (cheap models for simple prompts, frontier models for code or deep reasoning) using enterprise agentgateway on Kubernetes. Clients call one stable endpoint; the gateway classifies the request and picks the concrete model.
+Route LLM traffic to the *right* model per request using enterprise agentgateway on Kubernetes: expensive frontier models (Claude Opus 4.8, GPT-5.5) only when the request actually needs them, a cheaper default (Claude Sonnet 5) for everything else. Clients call one stable endpoint; the gateway classifies the request and picks the concrete model.
 
 Enterprise agentgateway does not ship a first-party embedding-based semantic classifier. What it ships is the routing machinery:
 
@@ -46,9 +46,30 @@ kubectl create secret generic openai-secret -n semantic-routing \
 
 ## Step 2: Model backends
 
-One `EnterpriseAgentgatewayBackend` per model tier, plus one failover backend using priority groups.
+One `EnterpriseAgentgatewayBackend` per model tier, plus one failover backend using priority groups. The tiers:
+
+| Backend | Model | Role |
+|---|---|---|
+| `claude-opus` | `claude-opus-4-8` | expensive; only for requests that need it (code) |
+| `gpt-5-5` | `gpt-5.5` | expensive; deep reasoning |
+| `claude-sonnet` | `claude-sonnet-5` | cheaper default for everything else |
 
 ```yaml
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
+metadata:
+  name: claude-opus
+  namespace: semantic-routing
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: claude-opus-4-8
+  policies:
+    auth:
+      secretRef:
+        name: anthropic-secret
+---
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayBackend
 metadata:
@@ -58,7 +79,7 @@ spec:
   ai:
     provider:
       anthropic:
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5
   policies:
     auth:
       secretRef:
@@ -67,43 +88,13 @@ spec:
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayBackend
 metadata:
-  name: claude-haiku
-  namespace: semantic-routing
-spec:
-  ai:
-    provider:
-      anthropic:
-        model: claude-haiku-4-5
-  policies:
-    auth:
-      secretRef:
-        name: anthropic-secret
----
-apiVersion: enterpriseagentgateway.solo.io/v1alpha1
-kind: EnterpriseAgentgatewayBackend
-metadata:
-  name: gpt-5
+  name: gpt-5-5
   namespace: semantic-routing
 spec:
   ai:
     provider:
       openai:
-        model: gpt-5
-  policies:
-    auth:
-      secretRef:
-        name: openai-secret
----
-apiVersion: enterpriseagentgateway.solo.io/v1alpha1
-kind: EnterpriseAgentgatewayBackend
-metadata:
-  name: gpt-5-mini
-  namespace: semantic-routing
-spec:
-  ai:
-    provider:
-      openai:
-        model: gpt-5-mini
+        model: gpt-5.5
   policies:
     auth:
       secretRef:
@@ -121,21 +112,21 @@ spec:
   ai:
     groups:
     - providers:
-      - name: primary-gpt-5-mini
-        openai:
-          model: gpt-5-mini
-        policies:
-          auth:
-            secretRef:
-              name: openai-secret
-    - providers:
-      - name: fallback-claude-haiku
+      - name: primary-claude-sonnet
         anthropic:
-          model: claude-haiku-4-5
+          model: claude-sonnet-5
         policies:
           auth:
             secretRef:
               name: anthropic-secret
+    - providers:
+      - name: fallback-gpt-5-5
+        openai:
+          model: gpt-5.5
+        policies:
+          auth:
+            secretRef:
+              name: openai-secret
 ```
 
 The `model` field on the provider overrides whatever model the client sends. The backend *is* the model choice, which is what lets the route decide.
@@ -146,8 +137,8 @@ Three "virtual models", one hostname each:
 
 | Hostname | Behavior |
 |---|---|
-| `smart.demo.internal` | intent-based: `x-intent: code` → claude-sonnet, `x-intent: deep-reasoning` → gpt-5, default → claude-haiku |
-| `fast.demo.internal` | weighted 80/20 split: claude-haiku / gpt-5-mini |
+| `smart.demo.internal` | intent-based: `x-intent: code` → claude-opus-4-8, `x-intent: deep-reasoning` → gpt-5.5, default → claude-sonnet-5 (cheaper) |
+| `fast.demo.internal` | weighted 80/20 split: claude-sonnet-5 / gpt-5.5 |
 | `resilient.demo.internal` | priority-group failover backend |
 
 ```yaml
@@ -189,7 +180,7 @@ spec:
     backendRefs:
     - group: enterpriseagentgateway.solo.io
       kind: EnterpriseAgentgatewayBackend
-      name: claude-sonnet
+      name: claude-opus
   - matches:
     - path:
         type: PathPrefix
@@ -200,7 +191,7 @@ spec:
     backendRefs:
     - group: enterpriseagentgateway.solo.io
       kind: EnterpriseAgentgatewayBackend
-      name: gpt-5
+      name: gpt-5-5
   - matches:
     - path:
         type: PathPrefix
@@ -208,7 +199,7 @@ spec:
     backendRefs:
     - group: enterpriseagentgateway.solo.io
       kind: EnterpriseAgentgatewayBackend
-      name: claude-haiku
+      name: claude-sonnet
 ---
 # "fast": weighted split across two cheap models.
 apiVersion: gateway.networking.k8s.io/v1
@@ -229,11 +220,11 @@ spec:
     backendRefs:
     - group: enterpriseagentgateway.solo.io
       kind: EnterpriseAgentgatewayBackend
-      name: claude-haiku
+      name: claude-sonnet
       weight: 80
     - group: enterpriseagentgateway.solo.io
       kind: EnterpriseAgentgatewayBackend
-      name: gpt-5-mini
+      name: gpt-5-5
       weight: 20
 ---
 # "resilient": health-based failover via the priority-group backend.
@@ -309,18 +300,18 @@ kubectl port-forward -n semantic-routing svc/semantic-routing 8080:8080 &
 Intent-based routing: same endpoint, different models.
 
 ```bash
-# Explicit intent header -> claude-sonnet
+# Explicit intent header: escalates to the expensive model -> claude-opus-4-8
 curl -s http://localhost:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -H 'x-intent: code' \
   -d '{"model":"any","messages":[{"role":"user","content":"write a binary search in Go"}]}' | jq -r .model
 
-# No header; the PreRouting CEL classifier detects "prove" -> gpt-5
+# No header; the PreRouting CEL classifier detects "prove" -> gpt-5.5
 curl -s http://localhost:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"prove sqrt(2) is irrational"}]}' | jq -r .model
 
-# Generic prompt -> fallback claude-haiku
+# Generic prompt: stays on the cheaper default -> claude-sonnet-5
 curl -s http://localhost:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"say hi"}]}' | jq -r .model
@@ -338,7 +329,7 @@ for i in $(seq 1 10); do
 done | sort | uniq -c
 ```
 
-Failover serves from `gpt-5-mini` (priority group 0) while healthy:
+Failover serves from `claude-sonnet-5` (priority group 0) while healthy, shifting to `gpt-5.5` if Anthropic degrades:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
