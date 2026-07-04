@@ -450,10 +450,11 @@ config:
             use_reasoning: false
 EOF
 
-helm install semantic-router oci://ghcr.io/vllm-project/charts/semantic-router \
+helm upgrade semantic-router oci://ghcr.io/vllm-project/charts/semantic-router \
   --version v0.0.0-latest \
   --namespace semantic-routing \
-  -f vsr-values.yaml
+  -f vsr-values.yaml \
+  --set persistence.storageClassName=default
 
 kubectl wait --for=condition=Available deployment/semantic-router \
   -n semantic-routing --timeout=600s
