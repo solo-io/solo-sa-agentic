@@ -349,20 +349,21 @@ kubectl port-forward -n semantic-routing svc/semantic-routing 8080:8080 &
 
 Intent-based routing: same endpoint, different models.
 
+- Explicit intent header: escalates to the expensive model -> claude-opus-4-8
+- No header; the PreRouting CEL classifier detects "prove" -> gpt-5.5
+- Generic prompt: stays on the cheaper default -> claude-sonnet-5
 ```bash
-# Explicit intent header: escalates to the expensive model -> claude-opus-4-8
-curl -s http://localhost:8080/v1/chat/completions \
+
+curl -s http://35.229.54.135:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -H 'x-intent: code' \
   -d '{"model":"any","messages":[{"role":"user","content":"write a binary search in Go"}]}' | jq -r .model
 
-# No header; the PreRouting CEL classifier detects "prove" -> gpt-5.5
-curl -s http://localhost:8080/v1/chat/completions \
+curl -s http://35.229.54.135:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"prove sqrt(2) is irrational"}]}' | jq -r .model
 
-# Generic prompt: stays on the cheaper default -> claude-sonnet-5
-curl -s http://localhost:8080/v1/chat/completions \
+curl -s http://35.229.54.135:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"say hi"}]}' | jq -r .model
 ```
@@ -373,7 +374,7 @@ Weighted split (~80/20 over 10 calls):
 
 ```bash
 for i in $(seq 1 10); do
-  curl -s http://localhost:8080/v1/chat/completions \
+  curl -s http://35.229.54.135:8080/v1/chat/completions \
     -H 'Host: fast.demo.internal' -H 'content-type: application/json' \
     -d '{"model":"any","messages":[{"role":"user","content":"hi"}]}' | jq -r .model
 done | sort | uniq -c
@@ -382,12 +383,10 @@ done | sort | uniq -c
 Failover serves from `claude-sonnet-5` (priority group 0) while healthy, shifting to `gpt-5-mini` if Anthropic degrades:
 
 ```bash
-curl -s http://localhost:8080/v1/chat/completions \
+curl -s http://35.229.54.135:8080/v1/chat/completions \
   -H 'Host: resilient.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"hi"}]}' | jq -r .model
 ```
-
-> **Dry-run trick (no valid keys needed):** routing happens before provider auth, so even with placeholder keys you can prove where a request landed by the provider's 401 signature. Anthropic returns `{"error":{"type":"invalid_request_error","message":"invalid x-api-key"}}`, OpenAI returns `"Incorrect API key provided: ..."`. Useful when demoing routing logic without burning tokens.
 
 ## From Keyword CEL To True Semantic Routing
 
@@ -395,10 +394,245 @@ Three rungs, all using the same HTTPRoute wiring; only the classifier changes:
 
 1. **Client-declared intent**: the app sends `x-intent` itself. Zero gateway logic; you trust the caller.
 2. **Gateway CEL heuristics** (this demo): PreRouting transformation derives `x-intent` from headers, JWT claims, or `json(request.body)`. Deterministic, no extra hops, limited semantics.
-3. **External classifier via `extProc`**: replace `transformation` with `extProc` in the same PreRouting policy, pointing at a gRPC classifier service (e.g., an embedding-based intent model such as the vLLM Semantic Router, which speaks the ext_proc protocol). The processor inspects the prompt, sets `x-intent` (or rewrites the body), and route matching proceeds on the mutated request. Enterprise WAF is built on this exact hook, and `extProc` also supports CEL-conditional execution (`conditional` entries) to run different classifiers for different traffic.
+3. **External classifier via `extProc`** (built below): replace `transformation` with `extProc` in the same PreRouting policy, pointing at a gRPC classifier service. The processor inspects the prompt, sets `x-intent`, and route matching proceeds on the mutated request. Enterprise WAF is built on this exact hook, and `extProc` also supports CEL-conditional execution (`conditional` entries) to run different classifiers for different traffic.
 
-```yaml
-# Sketch: same policy slot, extProc instead of transformation
+The rest of this section builds rung 3 end to end: a small Go ext_proc classifier, deployed next to the gateway, wired in with a PreRouting `extProc` policy. The classifier here scores regex signals (a stand-in you can demo anywhere); `classify()` is the single function you swap for an embedding model, and the vLLM Semantic Router speaks the same ext_proc protocol if you want a production drop-in.
+
+### Rung 3a: the classifier
+
+The server implements Envoy's `ext_proc` v3 protocol: agentgateway streams it the request headers and (buffered) body, and it answers the body phase with a header mutation that sets `x-intent`.
+
+```bash
+mkdir -p semantic-classifier && cd semantic-classifier
+
+cat <<'EOF' > main.go
+// semantic-classifier: an Envoy ext_proc gRPC server that classifies the
+// intent of an OpenAI-style chat request and sets an x-intent header that
+// agentgateway routes on. Swap classify() for a real embedding model (or
+// point the gateway at vLLM Semantic Router) without touching the wiring.
+package main
+
+import (
+	"encoding/json"
+	"io"
+	"log"
+	"net"
+	"regexp"
+	"strings"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc"
+)
+
+var (
+	codeRe = regexp.MustCompile(`(?i)(stack trace|traceback|exception|error:|segfault|debug|refactor|unit test|regex|compile|null pointer|func |def |class |` + "```" + `)`)
+	reasonRe = regexp.MustCompile(`(?i)(prove|theorem|derive|step[- ]by[- ]step|formal|trade-?offs?|from first principles)`)
+)
+
+type chatRequest struct {
+	Messages []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	} `json:"messages"`
+}
+
+// classify returns the intent for a chat-completions request body.
+// This is the swappable part: replace with an embedding lookup or a
+// small classification model for true semantic routing.
+func classify(body []byte) string {
+	text := string(body)
+	var req chatRequest
+	if err := json.Unmarshal(body, &req); err == nil && len(req.Messages) > 0 {
+		var parts []string
+		for _, m := range req.Messages {
+			if m.Role != "user" {
+				continue
+			}
+			var s string
+			if err := json.Unmarshal(m.Content, &s); err == nil {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			text = strings.Join(parts, "\n")
+		}
+	}
+	switch {
+	case codeRe.MatchString(text):
+		return "code"
+	case reasonRe.MatchString(text):
+		return "deep-reasoning"
+	default:
+		return "general"
+	}
+}
+
+type server struct{}
+
+func (s *server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		var resp *extprocv3.ProcessingResponse
+		switch v := req.Request.(type) {
+		case *extprocv3.ProcessingRequest_RequestBody:
+			intent := classify(v.RequestBody.GetBody())
+			log.Printf("classified request as %q", intent)
+			resp = &extprocv3.ProcessingResponse{
+				Response: &extprocv3.ProcessingResponse_RequestBody{
+					RequestBody: &extprocv3.BodyResponse{
+						Response: &extprocv3.CommonResponse{
+							HeaderMutation: &extprocv3.HeaderMutation{
+								SetHeaders: []*corev3.HeaderValueOption{{
+									Header: &corev3.HeaderValue{
+										Key:      "x-intent",
+										RawValue: []byte(intent),
+									},
+									AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+								}},
+							},
+						},
+					},
+				},
+			}
+		case *extprocv3.ProcessingRequest_RequestHeaders:
+			resp = &extprocv3.ProcessingResponse{
+				Response: &extprocv3.ProcessingResponse_RequestHeaders{
+					RequestHeaders: &extprocv3.HeadersResponse{},
+				},
+			}
+		case *extprocv3.ProcessingRequest_ResponseHeaders:
+			resp = &extprocv3.ProcessingResponse{
+				Response: &extprocv3.ProcessingResponse_ResponseHeaders{
+					ResponseHeaders: &extprocv3.HeadersResponse{},
+				},
+			}
+		case *extprocv3.ProcessingRequest_ResponseBody:
+			resp = &extprocv3.ProcessingResponse{
+				Response: &extprocv3.ProcessingResponse_ResponseBody{
+					ResponseBody: &extprocv3.BodyResponse{},
+				},
+			}
+		default:
+			continue
+		}
+
+		if err := stream.Send(resp); err != nil {
+			return err
+		}
+	}
+}
+
+func main() {
+	lis, err := net.Listen("tcp", ":9000")
+	if err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	extprocv3.RegisterExternalProcessorServer(grpcServer, &server{})
+	log.Println("semantic-classifier listening on :9000")
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("serve: %v", err)
+	}
+}
+EOF
+
+cat <<'EOF' > Dockerfile
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY main.go ./
+RUN CGO_ENABLED=0 go build -o /semantic-classifier .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /semantic-classifier /semantic-classifier
+EXPOSE 9000
+ENTRYPOINT ["/semantic-classifier"]
+EOF
+```
+
+(Verified with `github.com/envoyproxy/go-control-plane/envoy` v1.37.0 and `google.golang.org/grpc` v1.82.0; `go mod tidy` pins them in `go.sum`.)
+
+### Rung 3b: build and push
+
+Push to any registry the cluster can pull from (GAR/ECR/ghcr):
+
+```bash
+export IMAGE='<your-registry>/semantic-classifier:0.1.0'
+
+go mod init semantic-classifier
+go mod tidy
+go build .          # sanity check before the image build
+
+docker build -t "$IMAGE" .
+docker push "$IMAGE"
+```
+
+### Rung 3c: deploy the classifier
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: semantic-classifier
+  namespace: semantic-routing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: semantic-classifier
+  template:
+    metadata:
+      labels:
+        app: semantic-classifier
+    spec:
+      containers:
+      - name: classifier
+        image: ${IMAGE}
+        ports:
+        - containerPort: 9000
+        readinessProbe:
+          tcpSocket:
+            port: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: semantic-classifier
+  namespace: semantic-routing
+spec:
+  selector:
+    app: semantic-classifier
+  ports:
+  - name: grpc
+    port: 9000
+    targetPort: 9000
+    appProtocol: grpc
+EOF
+```
+
+### Rung 3d: swap the CEL policy for extProc
+
+Remove the CEL classifier so the two PreRouting policies don't fight over `x-intent`, then attach the extProc policy. `requestBodyMode: Buffered` makes agentgateway send the full request body before route selection, which is what lets the classifier see the prompt:
+
+```bash
+kubectl delete enterpriseagentgatewaypolicy intent-classifier -n semantic-routing
+
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: semantic-classifier
+  namespace: semantic-routing
 spec:
   targetRefs:
   - group: gateway.networking.k8s.io
@@ -408,8 +642,32 @@ spec:
     phase: PreRouting
     extProc:
       backendRef:
-        name: semantic-classifier   # your gRPC ext_proc Service
+        name: semantic-classifier
         port: 9000
+      processingOptions:
+        requestBodyMode: Buffered
+        responseBodyMode: None
+        responseHeaderMode: Skip
+EOF
+```
+
+The HTTPRoutes from Step 3 are untouched; only who sets `x-intent` changed.
+
+### Rung 3e: prove it beats keyword CEL
+
+This prompt contains none of the CEL keywords (`code`, `function`, `prove`, `theorem`), so rung 2 would have sent it to the cheap default. The classifier recognizes `stack trace` and escalates it to `claude-opus-4-8`:
+
+```bash
+curl -s http://localhost:8080/v1/chat/completions \
+  -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
+  -d '{"model":"any","messages":[{"role":"user","content":"why does my app keep crashing? here is the stack trace"}]}' | jq -r .model
+```
+
+Watch the classification decisions live:
+
+```bash
+kubectl logs -n semantic-routing deploy/semantic-classifier -f
+# classified request as "code"
 ```
 
 ## Cleanup
