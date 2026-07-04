@@ -1,0 +1,13 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: okta-token
+  namespace: agentgateway-system
+spec:
+  static:
+    host: <YOUR_OKTA_DOMAIN>            # e.g. dev-12345.okta.com
+    port: 443
+  policies:
+    tls: {}
+    http:
+      requestTimeout: 5s
