@@ -394,10 +394,34 @@ This section uses vLLM Semantic Routing. The Semantic Router announces its decis
 
 ### Rung 3a: deploy the vLLM Semantic Router
 
-The router ships as a Helm chart ([integration guide](https://vllm-semantic-router.com/docs/installation/k8s/agentgateway)). This values file defines the two Anthropic model tiers and the decision rules that select between them; the router's built-in domain classifier (an embedding model, downloaded at startup) maps prompts to domains like `computer science` or `math`:
+The router ships as a Helm chart ([integration guide](https://vllm-semantic-router.com/docs/installation/k8s/agentgateway)). Pin both the chart **and** the image to the `0.3.0` release. The tempting `--version v0.0.0-latest` tracks nightly builds — as of July 2026 the nightly classifier assigns out-of-domain prompts (greetings, cooking, poetry) to arbitrary academic domains with ~0.999 confidence, so nothing ever falls through to `default_model`. And pinning the chart alone is not enough: chart `0.3.0` still defaults the image to the floating `extproc:latest` tag.
+
+Two environment requirements before installing:
+
+- **Node memory**: the router loads mmBERT models and needs a node with at least 3Gi allocatable memory free after daemonsets — an 8 GiB VM (e.g. AKS `Standard_D2s_v3`) is the practical minimum. On 4 GiB nodes the pod stays `Pending: Insufficient memory` forever.
+- **Storage class**: the chart's model-cache PVC defaults to `standard`, which only exists on GKE. Set `persistence.storageClassName` to your cluster's class (`default` on AKS, `gp3` on EKS). Don't use the chart's documented `"-"` shortcut — it renders `storageClassName: ""`, which disables dynamic provisioning entirely and the PVC never binds.
+
+This values file pins the image, fixes the resource defaults the release chart under-provisions (its rendered 1Gi/2Gi values OOM-kill the pod while loading models), and defines the two Anthropic model tiers plus the decision rules that select between them. The router's built-in domain classifier (an embedding model, downloaded at startup into the PVC) maps prompts to MMLU domains like `computer science` or `math`.
+
+One subtlety in the decision rules: a `type: domain` condition resolves a raw MMLU category name (`math`, `philosophy`) only when no predefined signal claims that category. `computer science` *is* claimed — by the chart's built-in `code_keywords` domain signal — so the `code` decision must reference the signal name. Write `name: computer science` there instead and the decision silently never matches (`No decision matched` in the router logs, and every code prompt rides the default model).
 
 ```bash
 cat <<'EOF' > vsr-values.yaml
+image:
+  tag: v0.3.0                # chart default resolves to the floating :latest
+  pullPolicy: IfNotPresent   # chart default is Never, which fails unless the image is pre-cached
+
+persistence:
+  storageClassName: default  # AKS; use gp3 on EKS, standard on GKE
+
+resources:                   # release chart renders 1Gi request / 2Gi limit -> OOMKilled
+  requests:
+    memory: "3Gi"
+    cpu: "1"
+  limits:
+    memory: "6Gi"
+    cpu: "2"
+
 config:
   version: v0.3
   listeners: []
@@ -429,7 +453,7 @@ config:
           operator: OR
           conditions:
             - type: domain
-              name: computer science
+              name: code_keywords   # built-in signal for the "computer science" category
         modelRefs:
           - model: claude-opus-4-8
             use_reasoning: false
@@ -448,17 +472,18 @@ config:
             use_reasoning: false
 EOF
 
-helm upgrade semantic-router oci://ghcr.io/vllm-project/charts/semantic-router \
-  --version v0.0.0-latest \
+helm install semantic-router oci://ghcr.io/vllm-project/charts/semantic-router \
+  --version 0.3.0 \
   --namespace semantic-routing \
-  -f vsr-values.yaml \
-  --set persistence.storageClassName=default
+  -f vsr-values.yaml
 
 kubectl wait --for=condition=Available deployment/semantic-router \
   -n semantic-routing --timeout=600s
 ```
 
-The chart exposes a `semantic-router` Service with the ext_proc gRPC endpoint on port `50051`. The values above target the `v0.3` config schema; if you pin a different chart version, diff against the [chart's reference values](https://raw.githubusercontent.com/vllm-project/semantic-router/refs/heads/main/deploy/kubernetes/agentgateway/semantic-router-values/values.yaml).
+The first startup downloads the classifier models into the PVC, so the wait can take a few minutes.
+
+The chart exposes a `semantic-router` Service with the ext_proc gRPC endpoint on port `50051`. The values above target the `v0.3` config schema shipped with chart `0.3.0`; if you pin a different version, diff against the [chart's reference values](https://raw.githubusercontent.com/vllm-project/semantic-router/refs/heads/main/deploy/kubernetes/agentgateway/semantic-router-values/values.yaml).
 
 ### Rung 3b: a passthrough backend and route
 
