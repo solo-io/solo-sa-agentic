@@ -442,8 +442,6 @@ config:
             - type: domain
               name: math
             - type: domain
-              name: physics
-            - type: domain
               name: philosophy
         modelRefs:
           - model: claude-opus-4-8
