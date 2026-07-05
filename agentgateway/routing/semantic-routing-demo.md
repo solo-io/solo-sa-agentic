@@ -508,7 +508,9 @@ The `smart`/`fast`/`resilient` routes from Step 3 are untouched; `semantic.demo.
 
 ### Rung 3c: attach the extProc policy
 
-`requestBodyMode: Buffered` sends the router the full prompt to classify; buffered response mode lets it stamp its `x-vsr-*` decision headers on the response. Note what's *absent*: no `phase: PreRouting`. The router rewrites the body rather than steering the route, so the default PostRouting phase — scoped to just this HTTPRoute — is the right attachment point:
+`requestBodyMode: Buffered` sends the router the full prompt to classify; buffered response mode lets it stamp its `x-vsr-*` decision headers on the response. Note what's *absent*: no `phase: PreRouting`. The router rewrites the body rather than steering the route, so the default PostRouting phase scoped to just this HTTPRoute is the right attachment point.
+
+The way this is done is via the `backendRef` below. If you run `kubectl get svc -n semantic-routing`, you will see that Service running. It's deployed with the vLLM Semantic Router Helm Chart.
 
 ```bash
 kubectl apply -f - <<EOF
