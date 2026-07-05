@@ -538,7 +538,7 @@ EOF
 
 Buffered body modes disable streaming responses; if you need `stream: true`, use `FullDuplexStreamed` instead.
 
-### Rung 3d: prove it beats keyword CEL
+### Rung 3d: Auto Testing
 
 Clients send `"model": "auto"` and the router substitutes its decision. This prompt contains none of the rung-2 CEL keywords (`code`, `function`, `prove`, `theorem`), so the keyword classifier would have kept it on the cheap default — the embedding classifier recognizes a `computer science` prompt and escalates it:
 
