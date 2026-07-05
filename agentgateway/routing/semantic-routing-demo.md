@@ -568,25 +568,53 @@ Buffered body modes disable streaming responses; if you need `stream: true`, use
 Clients send `"model": "auto"` and the router substitutes its decision. This prompt contains none of the rung-2 CEL keywords (`code`, `function`, `prove`, `theorem`), so the keyword classifier would have kept it on the cheap default — the embedding classifier recognizes a `computer science` prompt and escalates it:
 
 ```bash
-curl -s http://localhost:8080/v1/chat/completions \
+kubectl port-forward -n semantic-routing svc/semantic-routing 8080:8080 &
+```
+
+OR
+
+```bash
+export INGRESS_GW_ADDRESS=$(kubectl get svc -n semantic-routing semantic-routing -o jsonpath="{.status.loadBalancer.ingress[0]['hostname','ip']}")
+echo $INGRESS_GW_ADDRESS
+```
+
+```bash
+curl -s http://$INGRESS_GW_ADDRESS:8080/v1/chat/completions \
   -H 'Host: semantic.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"auto","messages":[{"role":"user","content":"why does my app keep crashing? here is the stack trace"}]}' | jq -r .model
-# claude-opus-4-8
+```
 
-curl -s http://localhost:8080/v1/chat/completions \
+Output should be `claude-opus-4-8`
+
+```bash
+curl -s http://$INGRESS_GW_ADDRESS:8080/v1/chat/completions \
   -H 'Host: semantic.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"auto","messages":[{"role":"user","content":"say hi"}]}' | jq -r .model
-# claude-sonnet-5
 ```
+
+Output should be `claude-sonnet-5`
 
 The router's decision metadata comes back as response headers:
 
 ```bash
-curl -s -D - -o /dev/null http://localhost:8080/v1/chat/completions \
+curl -s -D - -o /dev/null http://$INGRESS_GW_ADDRESS:8080/v1/chat/completions \
   -H 'Host: semantic.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"auto","messages":[{"role":"user","content":"what is the derivative of x^3?"}]}' | grep -i x-vsr
-# x-vsr-selected-category: math
-# x-vsr-selected-model: claude-opus-4-8
+```
+
+Output:
+```
+x-vsr-inbound-protocol: openai
+x-vsr-outbound-protocol: openai
+x-vsr-selected-category: math
+x-vsr-selected-decision: deep-reasoning
+x-vsr-selected-confidence: 0.9534
+x-vsr-selected-reasoning: off
+x-vsr-selected-model: claude-opus-4-8
+x-vsr-injected-system-prompt: false
+x-vsr-replay-id: c2e22a9831c09c761d07c51c882f75f1
+x-vsr-matched-domains: math
+x-vsr-context-token-count: 8
 ```
 
 ## Cleanup
