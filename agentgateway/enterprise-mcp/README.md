@@ -1169,6 +1169,212 @@ X-Agent-Name=obo-demo-agent      → 43 tools
 X-Agent-Name=(none)              →  0 tools
 ```
 
+## 13. Attribute-Based Access Control (ABAC)
+
+## 13a. ABAC With CEL
+
+Use Cases 2 and 12 answer an identity question: *which tools may this agent ever
+call?* ABAC answers a runtime question: *may this specific request happen, given
+the attributes it carries right now?* Same agent, same allowlist, different
+outcome depending on the attributes of the request.
+
+Agentgateway's CEL authorization engine is a full ABAC policy decision point.
+Every rule is a CEL expression evaluated per request over:
+
+| NIST ABAC category | CEL attributes available at authorization time |
+|---|---|
+| Subject | `jwt.*` (any verified claim: `sub`, `agent_id`, `scope`, groups), `source.identity.*` (SPIFFE) |
+| Resource | `mcp.tool.name`, `mcp.tool.target`, `mcp.resource.name`, `proxy.route.*` |
+| Action | `mcp.methodName`, `request.method`, `request.path` |
+| Environment | `request.headers`, `source.address`, `env.namespace` |
+
+Policies with `authorization` blocks **merge** across attachment points, and the
+three actions compose like this:
+
+1. Any matching `Deny` rule denies the request.
+2. Every `Require` rule must match (deny-by-default posture).
+3. If at least one `Allow` rule exists, at least one must match.
+
+This demo layers two new attribute rules onto the core-banking backend from Use
+Case 2 **without touching** the existing `core-banking-tool-allowlist` policy:
+
+1. **Environment attribute (`Require`)**: reading account data
+   (`accounts.get_summary`, which returns customer PII) requires an approved
+   access ticket, presented as an `x-change-ticket` header starting with
+   `CHG-`. No ticket, no tool: it even disappears from `tools/list`.
+2. **Subject attribute (`Deny`)**: any JWT whose `sub` starts with
+   `contractor-` is denied everything on this backend, even when `agent_id` and
+   `scope` would otherwise pass the allowlist. Deny overrides allow.
+
+What this proves:
+
+1. The decision changes per request based on attributes, with no change to the
+   agent's identity, token issuer, or the existing allowlist.
+2. `Require` and `Deny` policies merge with the Use Case 2 `Allow` policy.
+3. Filtering is visible in `tools/list` and enforced on `tools/call`.
+
+### Apply the ABAC policies
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: core-banking-abac-change-ticket
+  namespace: agentgateway-system
+  labels:
+    example.io/control: abac-environment-attribute
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: internal-core-banking-mcp
+  backend:
+    mcp:
+      authorization:
+        action: Require
+        policy:
+          matchExpressions:
+          # accounts.get_summary (returns PII) is only reachable with a ticket.
+          # A missing header fails CEL evaluation, which counts as no match,
+          # so the Require rule denies by default.
+          - 'mcp.tool.name != "accounts.get_summary" || request.headers["x-change-ticket"].startsWith("CHG-")'
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: core-banking-abac-deny-contractors
+  namespace: agentgateway-system
+  labels:
+    example.io/control: abac-subject-attribute
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: internal-core-banking-mcp
+  backend:
+    mcp:
+      authorization:
+        action: Deny
+        policy:
+          matchExpressions:
+          - 'jwt.sub.startsWith("contractor-")'
+EOF
+```
+
+### Test: attribute-driven tool visibility
+
+Define two small helpers (initialize a session, then list tools). Extra curl
+headers can be appended to either call:
+
+```bash
+mcp_session() {
+  local token="$1"; shift
+  curl -sS -D - -o /dev/null http://127.0.0.1:18083/mcp/core-banking \
+    -H 'content-type: application/json' \
+    -H 'accept: application/json, text/event-stream' \
+    -H 'mcp-protocol-version: 2025-06-18' \
+    -H "authorization: Bearer ${token}" "$@" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"abac-demo","version":"0.1.0"}}}' \
+    | awk 'BEGIN{IGNORECASE=1} /^mcp-session-id:/ {gsub("\r", "", $0); sub(/^[^:]+:[[:space:]]*/, "", $0); print; exit}'
+}
+
+list_tools() {
+  local token="$1"; shift
+  local sid
+  sid="$(mcp_session "$token" "$@")"
+  curl -sS http://127.0.0.1:18083/mcp/core-banking \
+    -H 'content-type: application/json' \
+    -H 'accept: application/json, text/event-stream' \
+    -H 'mcp-protocol-version: 2025-06-18' \
+    -H "authorization: Bearer ${token}" \
+    -H "mcp-session-id: ${sid}" "$@" \
+    -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+    | sed 's/^data: //' \
+    | jq -r '(.result.tools // []) | if length == 0 then "(no tools)" else .[].name end'
+}
+```
+
+Now run the three scenarios. The first two use the **same token**; only the
+access-ticket header differs:
+
+```bash
+ABAC_JWT="$(./scripts/generate-test-jwt.sh agt-account-servicing-prod accounts.read)"
+
+echo '--- same agent, no access ticket ---'
+list_tools "$ABAC_JWT"
+
+echo '--- same agent, with access ticket ---'
+list_tools "$ABAC_JWT" -H 'x-change-ticket: CHG-4711'
+
+echo '--- contractor subject, valid agent_id and scope ---'
+CONTRACTOR_JWT="$(SUBJECT=contractor-eve ./scripts/generate-test-jwt.sh agt-account-servicing-prod accounts.read)"
+list_tools "$CONTRACTOR_JWT"
+```
+
+Expected output:
+
+```
+--- same agent, no access ticket ---
+transactions.search
+--- same agent, with access ticket ---
+accounts.get_summary
+transactions.search
+--- contractor subject, valid agent_id and scope ---
+(no tools)
+```
+
+### Test: enforcement on tools/call
+
+List filtering is the visible half; the call path is the enforcement point.
+Same token, and only the environment attribute flips the decision:
+
+```bash
+call_summary() {
+  local token="$1"; shift
+  local sid
+  sid="$(mcp_session "$token" "$@")"
+  curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:18083/mcp/core-banking \
+    -H 'content-type: application/json' \
+    -H 'accept: application/json, text/event-stream' \
+    -H 'mcp-protocol-version: 2025-06-18' \
+    -H "authorization: Bearer ${token}" \
+    -H "mcp-session-id: ${sid}" "$@" \
+    -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"accounts.get_summary","arguments":{"account_id":"acct-001"}}}'
+}
+
+# Denied: no access ticket
+call_summary "$ABAC_JWT"
+
+# Allowed: access ticket present
+call_summary "$ABAC_JWT" -H 'x-change-ticket: CHG-4711'
+```
+
+Expected output. Note the denied call returns HTTP `400` with the tool masked
+as unknown, so unauthorized callers cannot even confirm the tool exists:
+
+```
+{"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"Unknown tool: accounts.get_summary"}}
+HTTP 400
+
+data: {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"account summary for acct-001"}],"structuredContent":{"account_id":"acct-001","account_type":"checking","current_balance":"123.45"}}}
+HTTP 200
+```
+
+For a visual version, use MCP Inspector exactly as in the OBO demo above:
+connect to the core-banking route with the bearer token, then add or remove the
+`x-change-ticket` custom header and watch `accounts.get_summary` appear and
+disappear from the tool list on reconnect.
+
+### Cleanup
+
+```bash
+kubectl delete enterpriseagentgatewaypolicies -n agentgateway-system \
+  core-banking-abac-change-ticket core-banking-abac-deny-contractors
+```
+
+## 13b. ABAC With 
+
 ## 13. Observability
 
 ### Cost Optimization
@@ -1183,14 +1389,3 @@ Per token count/limit
 ![](../images/agw-trace-dashboard.png)
 
 ![](../images/agw-dashboard.png)
-
-
-
-
-
-### Datadog
-
-- Show token usage
-- Show errors/requests by model
-- Show tracing
-- MCP tool calls
