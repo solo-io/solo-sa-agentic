@@ -1,6 +1,6 @@
 # Semantic Model Routing With Enterprise Agentgateway
 
-Route LLM traffic to the *right* model per request using enterprise agentgateway on Kubernetes: expensive frontier models (Claude Opus 4.8, GPT-5.5) only when the request actually needs them, a cheaper default (Claude Sonnet 5) for everything else. Clients call one stable endpoint; the gateway classifies the request and picks the concrete model.
+Route LLM traffic to the *right* model per request using agentgateway on Kubernetes: expensive frontier models (Claude Opus 4.8, GPT-5.5) only when the request actually needs them, a cheaper default (Claude Sonnet 5) for everything else. Clients call one stable endpoint; the gateway classifies the request and picks the concrete model.
 
 Enterprise agentgateway does not ship a first-party embedding-based semantic classifier. What it ships is the routing machinery:
 
@@ -8,28 +8,30 @@ Enterprise agentgateway does not ship a first-party embedding-based semantic cla
 - **`HTTPRoute`**: weighted splits and header-based routing across AI backends.
 - **`EnterpriseAgentgatewayPolicy`** with **`phase: PreRouting`**: transformation (CEL) or `extProc` that runs *before* route selection, so a derived intent header can drive the routing decision.
 
-The pattern: a PreRouting policy classifies the request and sets `x-intent`; the HTTPRoute matches on `x-intent` and steers to the right model backend. Swap the CEL classifier for an `extProc` server and the same wiring becomes true semantic routing.x
+The pattern: a PreRouting policy classifies the request and sets `x-intent`; the HTTPRoute matches on `x-intent` and steers to the right model backend. For true semantic classification, the same `extProc` hook plugs in the vLLM Semantic Router (last section).
 
 ## Quick Vocab
 
-- **`EnterpriseAgentgatewayBackend`** (`enterpriseagentgateway.solo.io/v1alpha1`): a backend definition. For LLMs, `spec.ai.provider.<anthropic|openai|gemini|bedrock|...>` with optional `model` override; `spec.policies.auth.secretRef` for credentials. `spec.ai.groups` instead of `provider` gives priority-ordered provider groups. The `ai` spec is identical to the OSS `AgentgatewayBackend`; the enterprise kind additionally supports `entMcp` backends and `tokenExchange`/`workloadIdentity` backend auth.
-- **`EnterpriseAgentgatewayPolicy`** (`enterpriseagentgateway.solo.io/v1alpha1`): attaches traffic policies to a Gateway/route. `spec.traffic.phase: PreRouting` runs the policy before route selection (default is `PostRouting`).
+- **`EnterpriseAgentgatewayBackend`** : a backend definition. For LLMs, `spec.ai.provider.<anthropic|openai|gemini|bedrock|...>` with optional `model` override; `spec.policies.auth.secretRef` for credentials. `spec.ai.groups` instead of `provider` gives priority-ordered provider groups.
+- **`EnterpriseAgentgatewayPolicy`**: attaches traffic policies to a Gateway/route. `spec.traffic.phase: PreRouting` runs the policy before route selection (default is `PostRouting`).
 - **Transformation**: `spec.traffic.transformation.request.set` sets request headers from CEL expressions (request headers, JWT claims, or the request body via `json(request.body)`).
 - **Priority groups**: within a group, providers are weighted automatically by health; if a whole group degrades, traffic shifts to the next group.
 
 ## Prerequisites
 
-- A cluster running Solo Enterprise for Agentgateway (this was built against `enterprise-agentgateway` v2026.6.3):
+- A cluster running agentgateway
 
 ```bash
 kubectl get gatewayclass enterprise-agentgateway
-kubectl get crd enterpriseagentgatewaybackends.enterpriseagentgateway.solo.io enterpriseagentgatewaypolicies.enterpriseagentgateway.solo.io
 ```
 
 - An Anthropic API key and an OpenAI API key
+- `helm` (for the vLLM Semantic Router install in the last section)
 - `curl` and `jq`
 
-## Step 1: Namespace and provider secrets
+## Semantic Route Model Selection With CEL
+
+### Step 1: Namespace and provider secrets
 
 The default Secret resolver requires the API key under the `Authorization` key. Export the keys as environment variables and create the Secrets imperatively so keys never land in a manifest file in plain text:
 
@@ -44,7 +46,7 @@ kubectl create secret generic openai-secret -n semantic-routing \
   --from-literal=Authorization="$OPENAI_API_KEY"
 ```
 
-## Step 2: Model backends
+### Step 2: Model backends
 
 One `EnterpriseAgentgatewayBackend` per model tier, plus one failover backend using priority groups. The tiers:
 
@@ -137,10 +139,6 @@ spec:
         openai:
           model: gpt-5-mini
 ---
-# Per-provider auth for the failover backend, attached by provider name via
-# targetRefs[].sectionName. Note: enterprise-agentgateway v2026.6.3 rejects
-# inline ai.groups[].providers[].policies.auth (a CRD validation rule that
-# predates the auth field); newer versions accept it inline.
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayPolicy
 metadata:
@@ -177,7 +175,7 @@ EOF
 
 The `model` field on the provider overrides whatever model the client sends. The backend *is* the model choice, which is what lets the route decide.
 
-## Step 3: Gateway and routes
+### Step 3: Gateway and routes
 
 Three "virtual models", one hostname each:
 
@@ -297,7 +295,7 @@ spec:
 EOF
 ```
 
-## Step 4: PreRouting intent classifier
+### Step 4: PreRouting intent classifier
 
 This is the piece that makes it "semantic". `phase: PreRouting` runs the transformation *before* the HTTPRoute match, so the header it sets participates in routing. The CEL below respects a client-supplied `x-intent` and otherwise derives intent from the prompt content:
 
@@ -328,9 +326,9 @@ EOF
 
 Keyword CEL is deliberately simple; it's a stand-in for the classifier. The same PreRouting slot accepts an `extProc` policy instead, which is how you plug in a real semantic classifier (see [the ladder](#from-keyword-cel-to-true-semantic-routing)).
 
-This mirrors the pattern enterprise agentgateway uses in its own e2e suite: a PreRouting policy sets a header from a JWT claim (`jwt.tier`) and the HTTPRoute routes premium users to a different backend (`ent-controller/test/e2e/features/agentgateway/policies/testdata/jwt-transform-routing-policy.yaml`).
+This mirrors the pattern from enterprise agentgateway's own e2e suite: a PreRouting policy sets a header from a JWT claim (`jwt.tier`) and the HTTPRoute routes premium users to a different backend (`ent-controller/test/e2e/features/agentgateway/policies/testdata/jwt-transform-routing-policy.yaml`).
 
-## Step 5: Verify status
+### Step 5: Verify status
 
 ```bash
 kubectl get enterpriseagentgatewaybackends,httproutes,gateway -n semantic-routing
@@ -339,7 +337,7 @@ kubectl get enterpriseagentgatewaypolicies -n semantic-routing
 
 Expect every backend `ACCEPTED: True`, the Gateway `PROGRAMMED: True` (a proxy pod and a LoadBalancer Service appear in the namespace), and all three policies (`intent-classifier` plus the two failover auth policies) `ACCEPTED: True / ATTACHED: True`.
 
-## Step 6: Send traffic
+### Step 6: Send traffic
 
 Port-forward (or use the LoadBalancer address once assigned):
 
@@ -353,17 +351,16 @@ Intent-based routing: same endpoint, different models.
 - No header; the PreRouting CEL classifier detects "prove" -> gpt-5.5
 - Generic prompt: stays on the cheaper default -> claude-sonnet-5
 ```bash
-
-curl -s http://35.229.54.135:8080/v1/chat/completions \
+curl -s http://localhost:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -H 'x-intent: code' \
   -d '{"model":"any","messages":[{"role":"user","content":"write a binary search in Go"}]}' | jq -r .model
 
-curl -s http://35.229.54.135:8080/v1/chat/completions \
+curl -s http://localhost:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"prove sqrt(2) is irrational"}]}' | jq -r .model
 
-curl -s http://35.229.54.135:8080/v1/chat/completions \
+curl -s http://localhost:8080/v1/chat/completions \
   -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"say hi"}]}' | jq -r .model
 ```
@@ -374,7 +371,7 @@ Weighted split (~80/20 over 10 calls):
 
 ```bash
 for i in $(seq 1 10); do
-  curl -s http://35.229.54.135:8080/v1/chat/completions \
+  curl -s http://localhost:8080/v1/chat/completions \
     -H 'Host: fast.demo.internal' -H 'content-type: application/json' \
     -d '{"model":"any","messages":[{"role":"user","content":"hi"}]}' | jq -r .model
 done | sort | uniq -c
@@ -383,311 +380,248 @@ done | sort | uniq -c
 Failover serves from `claude-sonnet-5` (priority group 0) while healthy, shifting to `gpt-5-mini` if Anthropic degrades:
 
 ```bash
-curl -s http://35.229.54.135:8080/v1/chat/completions \
+curl -s http://localhost:8080/v1/chat/completions \
   -H 'Host: resilient.demo.internal' -H 'content-type: application/json' \
   -d '{"model":"any","messages":[{"role":"user","content":"hi"}]}' | jq -r .model
 ```
 
-## From Keyword CEL To True Semantic Routing
+## vLLM Semantic Routing
 
-Three rungs, all using the same HTTPRoute wiring; only the classifier changes:
+This section uses vLLM Semantic Routing. The Semantic Router announces its decision by **rewriting the `model` field in the request body** (its `x-vsr-*` headers are response-side observability, not request routing signals). HTTPRoute matching can't see the body, so the router picks the *model*, not the *provider*: the route still decides which provider backend serves the request, and that backend must pass the router's model choice through instead of overriding it. Two consequences:
 
-1. **Client-declared intent**: the app sends `x-intent` itself. Zero gateway logic; you trust the caller.
-2. **Gateway CEL heuristics** (this demo): PreRouting transformation derives `x-intent` from headers, JWT claims, or `json(request.body)`. Deterministic, no extra hops, limited semantics.
-3. **External classifier via `extProc`** (built below): replace `transformation` with `extProc` in the same PreRouting policy, pointing at a gRPC classifier service. The processor inspects the prompt, sets `x-intent`, and route matching proceeds on the mutated request. Enterprise WAF is built on this exact hook, and `extProc` also supports CEL-conditional execution (`conditional` entries) to run different classifiers for different traffic.
+- The tiers collapse into one provider. Here: `claude-opus-4-8` vs `claude-sonnet-5`, chosen semantically, served through a single Anthropic backend **without** a `model` override. Cross-provider semantic steering (Claude vs GPT) would need a classifier that sets a routable header at PreRouting — the one thing the CEL rung can do that this rung can't.
+- No PreRouting needed. Since the router doesn't influence *route* selection, its extProc policy attaches at the default `PostRouting` phase, scoped to a single HTTPRoute. `PreRouting` was only ever required to make a derived header visible to route matching.
 
-The rest of this section builds rung 3 end to end: a small Go ext_proc classifier, deployed next to the gateway, wired in with a PreRouting `extProc` policy. The classifier here scores regex signals (a stand-in you can demo anywhere); `classify()` is the single function you swap for an embedding model, and the vLLM Semantic Router speaks the same ext_proc protocol if you want a production drop-in.
+### Rung 3a: deploy the vLLM Semantic Router
 
-### Rung 3a: the classifier
+The router ships as a Helm chart ([integration guide](https://vllm-semantic-router.com/docs/installation/k8s/agentgateway)). Pin both the chart **and** the image to the `0.3.0` release. The tempting `--version v0.0.0-latest` tracks nightly builds — as of July 2026 the nightly classifier assigns out-of-domain prompts (greetings, cooking, poetry) to arbitrary academic domains with ~0.999 confidence, so nothing ever falls through to `default_model`. And pinning the chart alone is not enough: chart `0.3.0` still defaults the image to the floating `extproc:latest` tag.
 
-The server implements Envoy's `ext_proc` v3 protocol: agentgateway streams it the request headers and (buffered) body, and it answers the body phase with a header mutation that sets `x-intent`.
+Two environment requirements before installing:
 
-```bash
-mkdir -p semantic-classifier && cd semantic-classifier
+- **Node memory**: the router loads mmBERT models and needs a node with at least 3Gi allocatable memory free after daemonsets — an 8 GiB VM (e.g. AKS `Standard_D2s_v3`) is the practical minimum. On 4 GiB nodes the pod stays `Pending: Insufficient memory` forever.
+- **Storage class**: the chart's model-cache PVC defaults to `standard`, which only exists on GKE. Set `persistence.storageClassName` to your cluster's class (`default` on AKS, `gp3` on EKS). Don't use the chart's documented `"-"` shortcut — it renders `storageClassName: ""`, which disables dynamic provisioning entirely and the PVC never binds.
 
-cat <<'EOF' > main.go
-// semantic-classifier: an Envoy ext_proc gRPC server that classifies the
-// intent of an OpenAI-style chat request and sets an x-intent header that
-// agentgateway routes on. Swap classify() for a real embedding model (or
-// point the gateway at vLLM Semantic Router) without touching the wiring.
-package main
+This values file pins the image, fixes the resource defaults the release chart under-provisions (its rendered 1Gi/2Gi values OOM-kill the pod while loading models), and defines the two Anthropic model tiers plus the decision rules that select between them. The router's built-in domain classifier (an embedding model, downloaded at startup into the PVC) maps prompts to MMLU domains like `computer science` or `math`.
 
-import (
-	"encoding/json"
-	"io"
-	"log"
-	"net"
-	"regexp"
-	"strings"
-
-	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
-	"google.golang.org/grpc"
-)
-
-var (
-	codeRe = regexp.MustCompile(`(?i)(stack trace|traceback|exception|error:|segfault|debug|refactor|unit test|regex|compile|null pointer|func |def |class |` + "```" + `)`)
-	reasonRe = regexp.MustCompile(`(?i)(prove|theorem|derive|step[- ]by[- ]step|formal|trade-?offs?|from first principles)`)
-)
-
-type chatRequest struct {
-	Messages []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	} `json:"messages"`
-}
-
-// classify returns the intent for a chat-completions request body.
-// This is the swappable part: replace with an embedding lookup or a
-// small classification model for true semantic routing.
-func classify(body []byte) string {
-	text := string(body)
-	var req chatRequest
-	if err := json.Unmarshal(body, &req); err == nil && len(req.Messages) > 0 {
-		var parts []string
-		for _, m := range req.Messages {
-			if m.Role != "user" {
-				continue
-			}
-			var s string
-			if err := json.Unmarshal(m.Content, &s); err == nil {
-				parts = append(parts, s)
-			}
-		}
-		if len(parts) > 0 {
-			text = strings.Join(parts, "\n")
-		}
-	}
-	switch {
-	case codeRe.MatchString(text):
-		return "code"
-	case reasonRe.MatchString(text):
-		return "deep-reasoning"
-	default:
-		return "general"
-	}
-}
-
-type server struct{}
-
-func (s *server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
-	for {
-		req, err := stream.Recv()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-
-		var resp *extprocv3.ProcessingResponse
-		switch v := req.Request.(type) {
-		case *extprocv3.ProcessingRequest_RequestBody:
-			intent := classify(v.RequestBody.GetBody())
-			log.Printf("classified request as %q", intent)
-			resp = &extprocv3.ProcessingResponse{
-				Response: &extprocv3.ProcessingResponse_RequestBody{
-					RequestBody: &extprocv3.BodyResponse{
-						Response: &extprocv3.CommonResponse{
-							HeaderMutation: &extprocv3.HeaderMutation{
-								SetHeaders: []*corev3.HeaderValueOption{{
-									Header: &corev3.HeaderValue{
-										Key:      "x-intent",
-										RawValue: []byte(intent),
-									},
-									AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
-								}},
-							},
-						},
-					},
-				},
-			}
-		case *extprocv3.ProcessingRequest_RequestHeaders:
-			resp = &extprocv3.ProcessingResponse{
-				Response: &extprocv3.ProcessingResponse_RequestHeaders{
-					RequestHeaders: &extprocv3.HeadersResponse{},
-				},
-			}
-		case *extprocv3.ProcessingRequest_ResponseHeaders:
-			resp = &extprocv3.ProcessingResponse{
-				Response: &extprocv3.ProcessingResponse_ResponseHeaders{
-					ResponseHeaders: &extprocv3.HeadersResponse{},
-				},
-			}
-		case *extprocv3.ProcessingRequest_ResponseBody:
-			resp = &extprocv3.ProcessingResponse{
-				Response: &extprocv3.ProcessingResponse_ResponseBody{
-					ResponseBody: &extprocv3.BodyResponse{},
-				},
-			}
-		default:
-			continue
-		}
-
-		if err := stream.Send(resp); err != nil {
-			return err
-		}
-	}
-}
-
-func main() {
-	lis, err := net.Listen("tcp", ":9000")
-	if err != nil {
-		log.Fatalf("listen: %v", err)
-	}
-	grpcServer := grpc.NewServer()
-	extprocv3.RegisterExternalProcessorServer(grpcServer, &server{})
-	log.Println("semantic-classifier listening on :9000")
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("serve: %v", err)
-	}
-}
-EOF
-
-cat <<'EOF' > Dockerfile
-FROM golang:1.26 AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY main.go ./
-RUN CGO_ENABLED=0 go build -o /semantic-classifier .
-
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /semantic-classifier /semantic-classifier
-EXPOSE 9000
-ENTRYPOINT ["/semantic-classifier"]
-EOF
-```
-
-(Verified with `github.com/envoyproxy/go-control-plane/envoy` v1.37.0 and `google.golang.org/grpc` v1.82.0; `go mod tidy` pins them in `go.sum`.)
-
-### Rung 3b: build and push
-
-Push to any registry the cluster can pull from (GAR/ECR/ghcr):
+One subtlety in the decision rules: a `type: domain` condition resolves a raw MMLU category name (`math`, `philosophy`) only when no predefined signal claims that category. `computer science` *is* claimed — by the chart's built-in `code_keywords` domain signal — so the `code` decision must reference the signal name. Write `name: computer science` there instead and the decision silently never matches (`No decision matched` in the router logs, and every code prompt rides the default model).
 
 ```bash
-export IMAGE='<your-registry>/semantic-classifier:0.1.0'
+cat <<'EOF' > vsr-values.yaml
+image:
+  tag: v0.3.0                # chart default resolves to the floating :latest
+  pullPolicy: IfNotPresent   # chart default is Never, which fails unless the image is pre-cached
 
-go mod init semantic-classifier
-go mod tidy
-go build .          # sanity check before the image build
+persistence:
+  storageClassName: default  # AKS; use gp3 on EKS, standard on GKE
 
-docker build -t "$IMAGE" .
-docker push "$IMAGE"
+resources:                   # release chart renders 1Gi request / 2Gi limit -> OOMKilled
+  requests:
+    memory: "3Gi"
+    cpu: "1"
+  limits:
+    memory: "6Gi"
+    cpu: "2"
+
+config:
+  version: v0.3
+  listeners: []
+  providers:
+    defaults:
+      default_model: claude-sonnet-5   # cheap default for everything else
+    models:
+      - name: claude-opus-4-8
+        backend_refs:
+          - name: anthropic
+            endpoint: api.anthropic.com:443
+            weight: 1
+      - name: claude-sonnet-5
+        backend_refs:
+          - name: anthropic
+            endpoint: api.anthropic.com:443
+            weight: 1
+  routing:
+    modelCards:
+      - name: claude-opus-4-8
+        modality: text
+      - name: claude-sonnet-5
+        modality: text
+    decisions:
+      - name: code
+        description: Programming, debugging, and software engineering requests
+        priority: 10
+        rules:
+          operator: OR
+          conditions:
+            - type: domain
+              name: code_keywords   # built-in signal for the "computer science" category
+        modelRefs:
+          - model: claude-opus-4-8
+            use_reasoning: false
+      - name: deep-reasoning
+        description: Proofs, derivations, and formal analysis
+        priority: 10
+        rules:
+          operator: OR
+          conditions:
+            - type: domain
+              name: math
+            - type: domain
+              name: philosophy
+        modelRefs:
+          - model: claude-opus-4-8
+            use_reasoning: false
+EOF
+
+helm install semantic-router oci://ghcr.io/vllm-project/charts/semantic-router \
+  --version 0.3.0 \
+  --namespace semantic-routing \
+  -f vsr-values.yaml
+
+kubectl wait --for=condition=Available deployment/semantic-router \
+  -n semantic-routing --timeout=600s
 ```
 
-### Rung 3c: deploy the classifier
+The first startup downloads the classifier models into the PVC, so the wait can take a few minutes.
+
+The chart exposes a `semantic-router` Service with the ext_proc gRPC endpoint on port `50051`. The values above target the `v0.3` config schema shipped with chart `0.3.0`; if you pin a different version, diff against the [chart's reference values](https://raw.githubusercontent.com/vllm-project/semantic-router/refs/heads/main/deploy/kubernetes/agentgateway/semantic-router-values/values.yaml).
+
+### Rung 3b: a passthrough backend and route
+
+The Step 2 backends each pin a `model`, which would clobber the router's choice. This backend omits it — whatever `model` the router writes into the body is what Anthropic serves:
 
 ```bash
 kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBackend
 metadata:
-  name: semantic-classifier
+  name: claude-tiers
   namespace: semantic-routing
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: semantic-classifier
-  template:
-    metadata:
-      labels:
-        app: semantic-classifier
-    spec:
-      containers:
-      - name: classifier
-        image: ${IMAGE}
-        ports:
-        - containerPort: 9000
-        readinessProbe:
-          tcpSocket:
-            port: 9000
+  ai:
+    provider:
+      anthropic: {}
+  policies:
+    auth:
+      secretRef:
+        name: anthropic-secret
 ---
-apiVersion: v1
-kind: Service
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
-  name: semantic-classifier
+  name: semantic
   namespace: semantic-routing
 spec:
-  selector:
-    app: semantic-classifier
-  ports:
-  - name: grpc
-    port: 9000
-    targetPort: 9000
-    appProtocol: grpc
+  parentRefs:
+  - name: semantic-routing
+  hostnames:
+  - semantic.demo.internal
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/chat/completions
+    backendRefs:
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
+      name: claude-tiers
 EOF
 ```
 
-### Rung 3d: swap the CEL policy for extProc
+The `smart`/`fast`/`resilient` routes from Step 3 are untouched; `semantic.demo.internal` is a fourth virtual model living alongside them.
 
-Remove the CEL classifier so the two PreRouting policies don't fight over `x-intent`, then attach the extProc policy. `requestBodyMode: Buffered` makes agentgateway send the full request body before route selection, which is what lets the classifier see the prompt:
+### Rung 3c: attach the extProc policy
+
+`requestBodyMode: Buffered` sends the router the full prompt to classify; buffered response mode lets it stamp its `x-vsr-*` decision headers on the response. Note what's *absent*: no `phase: PreRouting`. The router rewrites the body rather than steering the route, so the default PostRouting phase scoped to just this HTTPRoute is the right attachment point.
+
+The way this is done is via the `backendRef` below. If you run `kubectl get svc -n semantic-routing`, you will see that Service running. It's deployed with the vLLM Semantic Router Helm Chart.
 
 ```bash
-kubectl delete enterpriseagentgatewaypolicy intent-classifier -n semantic-routing
-
 kubectl apply -f - <<EOF
 apiVersion: enterpriseagentgateway.solo.io/v1alpha1
 kind: EnterpriseAgentgatewayPolicy
 metadata:
-  name: semantic-classifier
+  name: semantic-router
   namespace: semantic-routing
 spec:
   targetRefs:
   - group: gateway.networking.k8s.io
-    kind: Gateway
-    name: semantic-routing
+    kind: HTTPRoute
+    name: semantic
   traffic:
-    phase: PreRouting
     extProc:
       backendRef:
-        name: semantic-classifier
-        port: 9000
+        name: semantic-router
+        port: 50051
       processingOptions:
+        requestHeaderMode: Send
         requestBodyMode: Buffered
-        responseBodyMode: None
-        responseHeaderMode: Skip
+        responseHeaderMode: Send
+        responseBodyMode: Buffered
+        allowModeOverride: true
 EOF
 ```
 
-The HTTPRoutes from Step 3 are untouched; only who sets `x-intent` changed.
+Buffered body modes disable streaming responses; if you need `stream: true`, use `FullDuplexStreamed` instead.
 
-### Rung 3e: prove it beats keyword CEL
+### Rung 3d: Auto Testing
 
-This prompt contains none of the CEL keywords (`code`, `function`, `prove`, `theorem`), so rung 2 would have sent it to the cheap default. The classifier recognizes `stack trace` and escalates it to `claude-opus-4-8`:
+Clients send `"model": "auto"` and the router substitutes its decision. This prompt contains none of the rung-2 CEL keywords (`code`, `function`, `prove`, `theorem`), so the keyword classifier would have kept it on the cheap default — the embedding classifier recognizes a `computer science` prompt and escalates it:
 
 ```bash
-curl -s http://localhost:8080/v1/chat/completions \
-  -H 'Host: smart.demo.internal' -H 'content-type: application/json' \
-  -d '{"model":"any","messages":[{"role":"user","content":"why does my app keep crashing? here is the stack trace"}]}' | jq -r .model
+kubectl port-forward -n semantic-routing svc/semantic-routing 8080:8080 &
 ```
 
-Watch the classification decisions live:
+OR
 
 ```bash
-kubectl logs -n semantic-routing deploy/semantic-classifier -f
-# classified request as "code"
+export INGRESS_GW_ADDRESS=$(kubectl get svc -n semantic-routing semantic-routing -o jsonpath="{.status.loadBalancer.ingress[0]['hostname','ip']}")
+echo $INGRESS_GW_ADDRESS
+```
+
+```bash
+curl -s http://$INGRESS_GW_ADDRESS:8080/v1/chat/completions \
+  -H 'Host: semantic.demo.internal' -H 'content-type: application/json' \
+  -d '{"model":"auto","messages":[{"role":"user","content":"why does my app keep crashing? here is the stack trace"}]}' | jq -r .model
+```
+
+Output should be `claude-opus-4-8`
+
+```bash
+curl -s http://$INGRESS_GW_ADDRESS:8080/v1/chat/completions \
+  -H 'Host: semantic.demo.internal' -H 'content-type: application/json' \
+  -d '{"model":"auto","messages":[{"role":"user","content":"say hi"}]}' | jq -r .model
+```
+
+Output should be `claude-sonnet-5`
+
+The router's decision metadata comes back as response headers:
+
+```bash
+curl -s -D - -o /dev/null http://$INGRESS_GW_ADDRESS:8080/v1/chat/completions \
+  -H 'Host: semantic.demo.internal' -H 'content-type: application/json' \
+  -d '{"model":"auto","messages":[{"role":"user","content":"what is the derivative of x^3?"}]}' | grep -i x-vsr
+```
+
+Output:
+```
+x-vsr-inbound-protocol: openai
+x-vsr-outbound-protocol: openai
+x-vsr-selected-category: math
+x-vsr-selected-decision: deep-reasoning
+x-vsr-selected-confidence: 0.9534
+x-vsr-selected-reasoning: off
+x-vsr-selected-model: claude-opus-4-8
+x-vsr-injected-system-prompt: false
+x-vsr-replay-id: c2e22a9831c09c761d07c51c882f75f1
+x-vsr-matched-domains: math
+x-vsr-context-token-count: 8
 ```
 
 ## Cleanup
 
 ```bash
+helm uninstall semantic-router -n semantic-routing
 kubectl delete namespace semantic-routing
 ```
 
-This removes the Gateway (and its LoadBalancer), all backends, routes, policies, and secrets.
-
-## Source References (agentgateway-enterprise repo)
-
-| What | Where |
-|---|---|
-| `EnterpriseAgentgatewayBackend` spec (embeds the upstream `AIBackend`) | `ent-controller/api/v1alpha1/enterpriseagentgateway/enterprise_agentgateway_backend_types.go` (~line 46) |
-| AI spec, priority groups, `NamedLLMProvider` (upstream types) | `controller/api/v1alpha1/agentgateway/agentgateway_backend_types.go` (~lines 150–260) |
-| Backend auth (`secretRef` under `Authorization` key) | `controller/api/v1alpha1/agentgateway/agentgateway_policy_types.go` (`BackendAuth`, ~line 1308) |
-| `PreRouting` phase + allowed policies (transformation, extProc, …) | `ent-controller/api/v1alpha1/enterpriseagentgateway/enterprise_agentgateway_policy_types.go` (~line 614) |
-| PreRouting transform-then-route e2e example | `ent-controller/test/e2e/features/agentgateway/policies/testdata/jwt-transform-routing-policy.yaml` |
-| AI backend + HTTPRoute e2e example | `ent-controller/test/e2e/features/agentgateway/budget/testdata/setup.yaml` |
-| ext_proc data-plane implementation | `crates/agentgateway/src/http/ext_proc.rs` |
-| PreRouting runs before route selection | `crates/agentgateway/src/proxy/httpproxy.rs` (gateway policies ~841, route selection ~855) |
-| Virtual models = standalone-only (XDS sets no model router) | `crates/agentgateway/src/types/agent_xds.rs` (~line 1346) |
+This removes the Gateway (and its LoadBalancer), all backends, routes, policies, secrets, and the Semantic Router deployment.
