@@ -35,21 +35,26 @@ Demo of Enterprise authentication architecture: caller authenticates to Okta, ob
 ```json
 {
   "ver": 1,
-  "jti": "<TOKEN_JTI>",
+  "jti": "AT.z1cKAoZ3eNTXj70XFHrsAfEIqswYRKz8bDtmlDruozk",
   "iss": "https://<YOUR_OKTA_DOMAIN>/oauth2/default",
   "aud": "api://default",
-  "iat": <TOKEN_IAT>,
-  "exp": <TOKEN_EXP>,
+  "iat": 1783552132,
+  "exp": 1783555732,
   "cid": "<OKTA_CLIENT_ID>",
+  "uid": "00u10872vxsVmP2HZ698",
   "scp": [
-    "llm.access",
+    "openid",
     "llm:openai",
     "llm:anthropic",
-    "llm:gemini",
-    "location-data:read",
-    "sales-data:write"
+    "llm.access",
+    "llm:gemini"
   ],
-  "sub": "<OKTA_CLIENT_ID>",
+  "auth_time": 1783552025,
+  "sub": "user1@example.com",
+  "Groups": [
+    "Everyone",
+    "team-tracks"
+  ],
   "locations": [
     "ATL-001",
     "ATL-002",
@@ -59,22 +64,28 @@ Demo of Enterprise authentication architecture: caller authenticates to Okta, ob
 }
 ```
 
+Key differences from `client_credentials` token:
+- `sub` is the actual user identity (`user1@example.com`), not the app client_id
+- `uid` identifies the Okta user object
+- `Groups` reflects the user's Okta group membership
+- `auth_time` shows when the user authenticated
+
 AGW validates `iss`, `aud`, and signature (via JWKS), then uses `scp`, `team`, `locations` for CEL RBAC and access logging.
 
 ## Environment
 
 | Component | Value |
 |-----------|-------|
-| Cluster | `<YOUR_CLUSTER>` |
+| Cluster | `k3s-milano` |
 | AGW Version | Enterprise 2026.6.3 |
-| Gateway | `https` (443, TLS, `*.example.com`) |
-| Okta | `<YOUR_OKTA_DOMAIN>/oauth2/default` |
+| Gateway | `https` (443, TLS, `*.servebeer.com`) |
+| Okta | `integrator-4829064.okta.com/oauth2/default` |
 
 | Provider | Hostname | Backend | Scope |
 |----------|----------|---------|-------|
-| OpenAI | `demo-llm.example.com` | `openai-llm` | `llm:openai` |
-| Anthropic | `demo-anthropic.example.com` | `anthropic-llm` | `llm:anthropic` |
-| Gemini | `demo-gemini.example.com` | `gemini-llm` | `llm:gemini` |
+| OpenAI | `demo-llm.servebeer.com` | `openai-llm` | `llm:openai` |
+| Anthropic | `demo-anthropic.servebeer.com` | `anthropic-llm` | `llm:anthropic` |
+| Gemini | `demo-gemini.servebeer.com` | `gemini-llm` | `llm:gemini` |
 
 ## Okta Setup
 
@@ -99,20 +110,20 @@ Custom claims (Claims tab):
 ## Deploy
 
 ```bash
-kubectl --context <YOUR_CLUSTER> apply -f 01-okta-jwks-backend.yaml
-kubectl --context <YOUR_CLUSTER> apply -f 02-httproute.yaml
-kubectl --context <YOUR_CLUSTER> apply -f 03-jwt-auth-policy.yaml
-kubectl --context <YOUR_CLUSTER> apply -f 04-access-log-policy.yaml
-kubectl --context <YOUR_CLUSTER> apply -f 05-cel-rbac-policy.yaml
-sed "s|\${ANTHROPIC_API_KEY}|${ANTHROPIC_API_KEY}|g" 06-anthropic-backend.yaml | kubectl --context <YOUR_CLUSTER> apply -f -
-kubectl --context <YOUR_CLUSTER> apply -f 07-anthropic-route.yaml
-sed "s|\${GEMINI_API_KEY}|${GEMINI_API_KEY}|g" 08-gemini-backend.yaml | kubectl --context <YOUR_CLUSTER> apply -f -
-kubectl --context <YOUR_CLUSTER> apply -f 09-gemini-route.yaml
+kubectl --context k3s-milano apply -f 01-okta-jwks-backend.yaml
+kubectl --context k3s-milano apply -f 02-httproute.yaml
+kubectl --context k3s-milano apply -f 03-jwt-auth-policy.yaml
+kubectl --context k3s-milano apply -f 04-access-log-policy.yaml
+kubectl --context k3s-milano apply -f 05-cel-rbac-policy.yaml
+sed "s|\${ANTHROPIC_APIKEY}|${ANTHROPIC_APIKEY}|g" 06-anthropic-backend.yaml | kubectl --context k3s-milano apply -f -
+kubectl --context k3s-milano apply -f 07-anthropic-route.yaml
+sed "s|\${GEMINI_API_KEY}|${GEMINI_API_KEY}|g" 08-gemini-backend.yaml | kubectl --context k3s-milano apply -f -
+kubectl --context k3s-milano apply -f 09-gemini-route.yaml
 ```
 
 Verify all show `Accepted: True`:
 ```bash
-kubectl --context <YOUR_CLUSTER> get agentgatewaybackend,httproute,enterpriseagentgatewaypolicy -n agentgateway-system | grep -E "demo-|anthropic|gemini|openai"
+kubectl --context k3s-milano get agentgatewaybackend,httproute,enterpriseagentgatewaypolicy -n agentgateway-system | grep -E "demo-|anthropic|gemini|openai"
 ```
 
 ## Test
@@ -120,17 +131,17 @@ kubectl --context <YOUR_CLUSTER> get agentgatewaybackend,httproute,enterpriseage
 ### Get a token with all scopes
 
 ```bash
-curl -s -X POST https://<YOUR_OKTA_DOMAIN>/oauth2/default/v1/token \
+curl -s -X POST https://integrator-4829064.okta.com/oauth2/default/v1/token \
   -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'grant_type=client_credentials&client_id=<OKTA_CLIENT_ID>&client_secret=<OKTA_CLIENT_SECRET>&scope=llm.access llm:openai llm:anthropic llm:gemini location-data:read sales-data:write' \
+  -d 'grant_type=client_credentials&client_id=0oazbypeztjL5nB6F697&client_secret=-EzCxn_ApRj8SQF8zPiZq8RSnnVF4y_cHTxpYJOvwEP2yE19JURtFDmUrrMXflV-&scope=llm.access llm:openai llm:anthropic llm:gemini location-data:read sales-data:write' \
   | jq -r '.access_token' | cut -d. -f2 | base64 -d 2>/dev/null | jq .
 ```
 
 ### Without token (expect 401)
 
 ```bash
-curl -ik --resolve demo-llm.example.com:443:<GATEWAY_IP> \
-  https://demo-llm.example.com/v1/chat/completions \
+curl -ik --resolve demo-llm.servebeer.com:443:192.168.0.212 \
+  https://demo-llm.servebeer.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
 ```
@@ -138,30 +149,30 @@ curl -ik --resolve demo-llm.example.com:443:<GATEWAY_IP> \
 ### OpenAI — with token (expect 200)
 
 ```bash
-curl -sk --resolve demo-llm.example.com:443:<GATEWAY_IP> \
-  https://demo-llm.example.com/v1/chat/completions \
+curl -sk --resolve demo-llm.servebeer.com:443:192.168.0.212 \
+  https://demo-llm.servebeer.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(curl -s -X POST https://<YOUR_OKTA_DOMAIN>/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=<OKTA_CLIENT_ID>&client_secret=<OKTA_CLIENT_SECRET>&scope=llm.access llm:openai location-data:read sales-data:write' | jq -r '.access_token')" \
+  -H "Authorization: Bearer $(curl -s -X POST https://integrator-4829064.okta.com/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=0oazbypeztjL5nB6F697&client_secret=-EzCxn_ApRj8SQF8zPiZq8RSnnVF4y_cHTxpYJOvwEP2yE19JURtFDmUrrMXflV-&scope=llm.access llm:openai location-data:read sales-data:write' | jq -r '.access_token')" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}],"max_tokens":5}'
 ```
 
 ### Anthropic — with token (expect 200)
 
 ```bash
-curl -sk --resolve demo-anthropic.example.com:443:<GATEWAY_IP> \
-  https://demo-anthropic.example.com/v1/messages \
+curl -sk --resolve demo-anthropic.servebeer.com:443:192.168.0.212 \
+  https://demo-anthropic.servebeer.com/v1/messages \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(curl -s -X POST https://<YOUR_OKTA_DOMAIN>/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=<OKTA_CLIENT_ID>&client_secret=<OKTA_CLIENT_SECRET>&scope=llm.access llm:anthropic location-data:read sales-data:write' | jq -r '.access_token')" \
+  -H "Authorization: Bearer $(curl -s -X POST https://integrator-4829064.okta.com/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=0oazbypeztjL5nB6F697&client_secret=-EzCxn_ApRj8SQF8zPiZq8RSnnVF4y_cHTxpYJOvwEP2yE19JURtFDmUrrMXflV-&scope=llm.access llm:anthropic location-data:read sales-data:write' | jq -r '.access_token')" \
   -d '{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hello"}],"max_tokens":5}'
 ```
 
 ### Gemini — with token (expect 200)
 
 ```bash
-curl -sk --resolve demo-gemini.example.com:443:<GATEWAY_IP> \
-  https://demo-gemini.example.com/v1/chat/completions \
+curl -sk --resolve demo-gemini.servebeer.com:443:192.168.0.212 \
+  https://demo-gemini.servebeer.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(curl -s -X POST https://<YOUR_OKTA_DOMAIN>/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=<OKTA_CLIENT_ID>&client_secret=<OKTA_CLIENT_SECRET>&scope=llm.access llm:gemini location-data:read sales-data:write' | jq -r '.access_token')" \
+  -H "Authorization: Bearer $(curl -s -X POST https://integrator-4829064.okta.com/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=0oazbypeztjL5nB6F697&client_secret=-EzCxn_ApRj8SQF8zPiZq8RSnnVF4y_cHTxpYJOvwEP2yE19JURtFDmUrrMXflV-&scope=llm.access llm:gemini location-data:read sales-data:write' | jq -r '.access_token')" \
   -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"Hello"}],"max_tokens":5}'
 ```
 
@@ -170,22 +181,22 @@ curl -sk --resolve demo-gemini.example.com:443:<GATEWAY_IP> \
 Request OpenAI route with only `llm:anthropic` scope — should be denied by CEL RBAC:
 
 ```bash
-curl -sk --resolve demo-llm.example.com:443:<GATEWAY_IP> \
-  https://demo-llm.example.com/v1/chat/completions \
+curl -sk --resolve demo-llm.servebeer.com:443:192.168.0.212 \
+  https://demo-llm.servebeer.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(curl -s -X POST https://<YOUR_OKTA_DOMAIN>/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=<OKTA_CLIENT_ID>&client_secret=<OKTA_CLIENT_SECRET>&scope=llm.access llm:anthropic location-data:read sales-data:write' | jq -r '.access_token')" \
+  -H "Authorization: Bearer $(curl -s -X POST https://integrator-4829064.okta.com/oauth2/default/v1/token -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=client_credentials&client_id=0oazbypeztjL5nB6F697&client_secret=-EzCxn_ApRj8SQF8zPiZq8RSnnVF4y_cHTxpYJOvwEP2yE19JURtFDmUrrMXflV-&scope=llm.access llm:anthropic location-data:read sales-data:write' | jq -r '.access_token')" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}],"max_tokens":5}'
 ```
 
 ### Check access logs
 
 ```bash
-kubectl --context <YOUR_CLUSTER> logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=https --tail=5
+kubectl --context k3s-milano logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=https --tail=5
 ```
 
 Expected log fields:
 ```
-jwt.sub="<OKTA_CLIENT_ID>"
+jwt.sub="0oazbypeztjL5nB6F697"
 jwt.scp=["llm.access", "llm:openai", "location-data:read", "sales-data:write"]
 jwt.team="platform-engineering"
 jwt.locations=["ATL-001", "ATL-002", "ATL-003"]
