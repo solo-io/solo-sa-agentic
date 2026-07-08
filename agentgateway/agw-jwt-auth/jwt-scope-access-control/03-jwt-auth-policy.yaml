@@ -1,0 +1,29 @@
+# Okta default auth server uses "api://default" as the audience for client_credentials tokens.
+# To use a custom audience, configure a custom authorization server in Okta.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: demo-jwt-auth
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: demo-llm-route
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: "https://<YOUR_OKTA_DOMAIN>/oauth2/default"
+        audiences:
+        - "api://default"
+        jwks:
+          remote:
+            jwksPath: "/oauth2/default/v1/keys"
+            cacheDuration: "5m"
+            backendRef:
+              group: agentgateway.dev
+              kind: AgentgatewayBackend
+              name: okta-jwks
+              namespace: agentgateway-system
+              port: 443

@@ -1,0 +1,50 @@
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: demo-openai-rbac
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: demo-llm-route
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - "jwt.scp.exists(s, s == 'llm:openai')"
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: demo-anthropic-rbac
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: demo-anthropic-route
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - "jwt.scp.exists(s, s == 'llm:anthropic')"
+---
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: demo-gemini-rbac
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: demo-gemini-route
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - "jwt.scp.exists(s, s == 'llm:gemini')"

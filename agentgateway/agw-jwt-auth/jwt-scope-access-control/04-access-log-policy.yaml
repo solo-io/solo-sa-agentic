@@ -1,0 +1,36 @@
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: demo-llm-access-log
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: https
+  frontend:
+    accessLog:
+      attributes:
+        add:
+        - name: jwt.sub
+          expression: default(jwt.sub, "unknown")
+        - name: jwt.cid
+          expression: default(jwt.cid, "unknown")
+        - name: jwt.scp
+          expression: default(jwt.scp, "unknown")
+        - name: jwt.team
+          expression: default(jwt.team, "unknown")
+        - name: jwt.locations
+          expression: default(jwt.locations, "unknown")
+        - name: model.requested
+          expression: default(llm.requestModel, "n/a")
+        - name: model.actual
+          expression: default(llm.responseModel, "n/a")
+        - name: model.provider
+          expression: default(llm.provider, "n/a")
+        - name: tokens.input
+          expression: default(string(llm.inputTokens), "n/a")
+        - name: tokens.output
+          expression: default(string(llm.outputTokens), "n/a")
+        - name: tokens.total
+          expression: default(string(llm.totalTokens), "n/a")

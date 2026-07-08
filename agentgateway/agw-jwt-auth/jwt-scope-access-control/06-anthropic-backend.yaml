@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anthropic-api-key
+  namespace: agentgateway-system
+type: Opaque
+stringData:
+  Authorization: "${ANTHROPIC_API_KEY}"
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic-llm
+  namespace: agentgateway-system
+spec:
+  ai:
+    provider:
+      anthropic: {}
+  policies:
+    auth:
+      secretRef:
+        name: anthropic-api-key

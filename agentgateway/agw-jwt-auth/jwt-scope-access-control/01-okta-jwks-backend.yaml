@@ -1,0 +1,11 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: okta-jwks
+  namespace: agentgateway-system
+spec:
+  static:
+    host: <YOUR_OKTA_DOMAIN>
+    port: 443
+  policies:
+    tls: {}
