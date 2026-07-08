@@ -64,12 +64,6 @@ Demo of Enterprise authentication architecture: caller authenticates to Okta, ob
 }
 ```
 
-Key differences from `client_credentials` token:
-- `sub` is the actual user identity (`user1@example.com`), not the app client_id
-- `uid` identifies the Okta user object
-- `Groups` reflects the user's Okta group membership
-- `auth_time` shows when the user authenticated
-
 AGW validates `iss`, `aud`, and signature (via JWKS), then uses `scp`, `team`, `locations` for CEL RBAC and access logging.
 
 ## Environment
