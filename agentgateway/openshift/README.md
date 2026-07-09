@@ -12,20 +12,6 @@ There is **no IRSA, no SigV4, and no AWS credential on the gateway** for the inv
 
 This guide uses Amazon Nova Lite (`us.amazon.nova-lite-v1:0`). Anthropic models on Bedrock require a use case form submission in the AWS console; Nova Lite does not.
 
----
-
-## Why passthrough instead of IRSA
-
-| | IRSA / SigV4 (see [`../agentcore/README.md`](../agentcore/README.md)) | User-token passthrough (this guide) |
-|---|---|---|
-| AgentCore inbound mode | IAM (SigV4) | JWT (`customJWTAuthorizer`) |
-| Who invokes AgentCore | The **gateway's** AWS/IAM identity | The **user** (the Okta token is the credential) |
-| Credential on the invoke | SigV4 signature from the pod's IAM role | `Authorization: Bearer <Okta JWT>` |
-| Gateway needs AWS creds? | **Yes** — IRSA role / ambient creds | **No** — nothing to sign |
-| Who validates the caller | The gateway (edge) only; AgentCore trusts the signed request | The gateway (edge) **and** AgentCore (`customJWTAuthorizer`) |
-| Whose identity reaches AgentCore | The gateway's IAM principal | The **end user** (Okta `sub`, `scp`, custom claims) |
-
-Passthrough moves the trust boundary: because AgentCore re-validates the token, the user's identity is enforced at *both* ends, and the gateway carries no long-lived AWS credential for this leg.
 
 ---
 
