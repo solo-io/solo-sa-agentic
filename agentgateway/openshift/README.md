@@ -59,8 +59,6 @@ The same token must line up in three places, or the call is rejected:
 2. **Gateway** — `jwtAuthentication.providers[].issuer` = Okta issuer, `.audiences` = `<AGENTCORE_AUDIENCE>`.
 3. **AgentCore** — `customJWTAuthorizer.discoveryUrl` = Okta OIDC discovery, `allowedAudience` = `[<AGENTCORE_AUDIENCE>]`.
 
-Get any leg wrong and you see a `401` at the gateway (edge validation) or an authorization failure from AgentCore (`customJWTAuthorizer`).
-
 ---
 
 ## Prerequisites
@@ -302,8 +300,6 @@ TOKENS=$(curl -s -X POST "${OKTA_ISSUER}/v1/token" \
 
 export USER_TOKEN=$(echo "$TOKENS" | jq -r .access_token)
 ```
-
-> **"Your device cannot be activated because of an internal error"** on the browser page (while `/v1/device/authorize` still returns a `user_code`): the `default` authorization server's **access-policy rule** doesn't allow the Device Authorization grant. That rule's grant list is separate from the app's — fix at Security → API → `default` → Access Policies → edit the rule → check **Device Authorization** → Update Rule. Also assign your user to the app and enable the app's **Refresh Token** grant.
 
 ---
 
