@@ -129,9 +129,6 @@ Scaffold and deploy the agent (same flow as [`../agentcore/README.md`](../agentc
 
 ```bash
 # Install the AgentCore CLI: https://github.com/aws/agentcore-cli   (validated on v0.23.0)
-# uv must be installed first (the CLI requires it even with --skip-install).
-# On v0.23+, non-interactive create needs the full agent spec (framework +
-# model-provider + memory) OR --no-agent — the bare --defaults no longer suffices.
 agentcore create --name myagent \
   --framework Strands --model-provider Bedrock --memory none \
   --protocol HTTP --skip-git --skip-install --output-dir .
