@@ -174,5 +174,3 @@ EOF
 ```
 
 `mcp.tool.target` is the target name (`snowflake`); `mcp.tool.name` is the tool's own unprefixed name. To confirm the engine is live, a rule that matches nothing — `matchExpressions: ['mcp.tool.name == ""']` — hides every tool (a fast smoke test that RBAC is enforced). See doc 03 for the full RBAC-by-agent-identity (`X-Agent-Name`) and ABAC (`Require`/`Deny`) patterns, which apply here unchanged.
-
-> The Snowflake PAT is a long-lived credential the gateway holds on your behalf. The Okta gate and tool RBAC above limit **who** can drive it and **which** tools they reach, but the token off `:8080` still traverses plain HTTP — terminate TLS on the listener for anything past a lab (same caveat as doc 01).
