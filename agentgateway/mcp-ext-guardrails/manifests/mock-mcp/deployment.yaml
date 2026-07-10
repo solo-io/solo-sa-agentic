@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-mcp
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: demo-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: demo-mcp
+    spec:
+      containers:
+      - name: demo-mcp
+        # Stock public image + inline server code — same idiom as the other mocks
+        # in this repo (e.g. enterprise-mcp/manifests/mock-mcp-core-banking).
+        image: python:3.12-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        command:
+        - python
+        - -c
+        args:
+        - |
+          # Minimal MCP StreamableHTTP server with two tools:
+          #   echo             - a normal tool (calls pass the guardrail)
+          #   forbidden_action - a "dangerous" tool; the ExtMCP guardrail denies
+          #                      any tools/call whose name contains "forbidden"
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          SESSION_ID = "demo-mcp-session"
+
+          TOOLS = [
+              {
+                  "name": "echo",
+                  "description": "Echo back the provided message.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {"message": {"type": "string"}},
+                      "required": ["message"],
+                  },
+              },
+              {
+                  "name": "forbidden_action",
+                  "description": "A dangerous tool that the ExtMCP guardrail blocks.",
+                  "inputSchema": {
+                      "type": "object",
+                      "properties": {"target": {"type": "string"}},
+                  },
+              },
+          ]
+
+          class Handler(BaseHTTPRequestHandler):
+              def log_message(self, fmt, *args):
+                  print("%s - %s" % (self.address_string(), fmt % args), flush=True)
+
+              def _json(self, status, payload, session=False):
+                  body = json.dumps(payload).encode("utf-8")
+                  self.send_response(status)
+                  self.send_header("content-type", "application/json")
+                  self.send_header("content-length", str(len(body)))
+                  if session:
+                      self.send_header("Mcp-Session-Id", SESSION_ID)
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_GET(self):
+                  if self.path in ("/healthz", "/readyz"):
+                      self._json(200, {"status": "ok"})
+                      return
+                  self._json(404, {"error": "not found"})
+
+              def do_POST(self):
+                  length = int(self.headers.get("content-length", "0"))
+                  raw = self.rfile.read(length) if length else b"{}"
+                  try:
+                      request = json.loads(raw.decode("utf-8"))
+                  except Exception:
+                      self._json(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
+                      return
+
+                  method = request.get("method")
+                  request_id = request.get("id")
+
+                  if method == "initialize":
+                      self._json(200, {
+                          "jsonrpc": "2.0",
+                          "id": request_id,
+                          "result": {
+                              "protocolVersion": "2025-06-18",
+                              "capabilities": {"tools": {}},
+                              "serverInfo": {"name": "demo-mcp", "version": "0.1.0"},
+                          },
+                      }, session=True)
+                      return
+
+                  if method == "notifications/initialized":
+                      self._json(202, {})
+                      return
+
+                  if method == "tools/list":
+                      self._json(200, {"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}})
+                      return
+
+                  if method == "tools/call":
+                      params = request.get("params") or {}
+                      name = params.get("name")
+                      args = params.get("arguments") or {}
+                      if name == "echo":
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {"content": [{"type": "text", "text": "echo: " + str(args.get("message", ""))}]},
+                          })
+                          return
+                      if name == "forbidden_action":
+                          # Reachable only if the guardrail is NOT enforcing; the demo
+                          # policy blocks this before it ever gets here.
+                          self._json(200, {
+                              "jsonrpc": "2.0",
+                              "id": request_id,
+                              "result": {"content": [{"type": "text", "text": "performed forbidden_action (guardrail was bypassed!)"}]},
+                          })
+                          return
+                      self._json(404, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "unknown tool"}})
+                      return
+
+                  self._json(404, {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "method not found"}})
+
+          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 25m, memory: 64Mi}
+          limits: {cpu: 250m, memory: 128Mi}
