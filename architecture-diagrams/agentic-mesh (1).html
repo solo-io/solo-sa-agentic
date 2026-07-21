@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentic Mesh · Reference Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@500;600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:    #0B0E18;
+  --bg2:   #151927;
+  --bg3:   #1C2338;
+  --bdr:   #1E2438;
+  --bdr2:  #2A3154;
+  --pu:    #8A3FFC;
+  --p-dim: rgba(138,63,252,.10);
+  --p-glo: rgba(138,63,252,.45);
+  --wh:    #E8EAF2;
+  --wh2:   #9BA3B8;
+  --mu:    #4D5A7A;
+  --mo:    #7B8DB0;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--wh);font-family:'DM Sans',sans-serif;font-size:14px;overflow:hidden}
+
+.topbar{height:40px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;border-bottom:1px solid var(--bdr);background:var(--bg);flex-shrink:0;}
+.tb-cr{font-family:'DM Mono',monospace;font-size:10px;color:var(--mu);letter-spacing:.09em;text-transform:uppercase;}
+.tb-ti{font-family:'Figtree',sans-serif;font-weight:600;font-size:13px;color:var(--wh);letter-spacing:.02em;}
+.btn-sm{font-family:'DM Mono',monospace;font-size:10px;color:var(--mo);background:transparent;
+  border:1px solid var(--bdr2);border-radius:4px;padding:3px 10px;cursor:pointer;
+  letter-spacing:.05em;transition:all .15s;}
+.btn-sm:hover{border-color:var(--pu);color:var(--pu);}
+
+.workspace{display:flex;height:calc(100vh - 40px);}
+.canvas{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;}
+.hdr{padding:14px 22px 0;flex-shrink:0;}
+.ey{display:flex;align-items:center;gap:0;margin-bottom:8px;flex-wrap:wrap;}
+.ey-tag{font-family:'DM Mono',monospace;font-size:9px;color:var(--pu);letter-spacing:.10em;text-transform:uppercase;}
+.ey-dot{font-family:'DM Mono',monospace;font-size:9px;color:var(--mu);margin:0 7px;}
+.hd-t{font-family:'Figtree',sans-serif;font-weight:700;font-size:17px;color:var(--wh);line-height:1.22;max-width:600px;margin-bottom:7px;}
+.hd-l{font-family:'DM Sans',sans-serif;font-size:12px;color:var(--wh2);line-height:1.55;max-width:540px;margin-bottom:10px;}
+.legend{display:flex;gap:7px;flex-wrap:wrap;}
+.lc{font-family:'DM Mono',monospace;font-size:9px;color:var(--mo);border:1px solid var(--bdr2);border-radius:3px;padding:2px 8px;letter-spacing:.04em;}
+.svg-wrap{flex:1;overflow:hidden;padding:10px 18px 10px;display:flex;align-items:flex-start;}
+#diagram{display:block;width:100%;height:auto;}
+
+.side{width:400px;flex-shrink:0;border-left:1px solid var(--bdr);display:flex;flex-direction:column;background:var(--bg);overflow:hidden;}
+.pan-lbl{font-family:'DM Mono',monospace;font-size:9px;color:var(--mu);letter-spacing:.10em;text-transform:uppercase;
+  padding:10px 14px 7px;border-bottom:1px solid var(--bdr);flex-shrink:0;}
+.slist{overflow-y:auto;border-bottom:1px solid var(--bdr);flex:0 0 auto;max-height:48%;}
+.srow{display:flex;align-items:flex-start;gap:10px;padding:9px 13px;
+  border-bottom:1px solid var(--bdr);cursor:pointer;transition:background .12s;}
+.srow:last-child{border-bottom:none;}
+.srow:hover{background:var(--bg3);}
+.srow.act{background:var(--p-dim);border-left:2px solid var(--pu);padding-left:11px;}
+.sbadge{font-family:'DM Mono',monospace;font-size:9px;width:18px;height:18px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;
+  background:var(--bg3);color:var(--mo);border:1px solid var(--bdr2);transition:all .15s;}
+.srow.act .sbadge{background:var(--pu);color:#fff;border-color:var(--pu);}
+.sti{font-family:'Figtree',sans-serif;font-weight:600;font-size:13px;color:var(--wh);margin-bottom:3px;}
+.ssu{font-family:'DM Sans',sans-serif;font-size:11.5px;color:var(--wh2);line-height:1.45;}
+
+.sdet{flex:1;overflow-y:auto;padding:16px;}
+.det-ph{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;}
+.det-ph span{font-family:'DM Mono',monospace;font-size:9.5px;color:var(--mu);letter-spacing:.06em;text-transform:uppercase;}
+.det-ti{font-family:'Figtree',sans-serif;font-weight:700;font-size:16px;color:var(--wh);margin-bottom:7px;}
+.det-le{font-family:'DM Sans',sans-serif;font-size:12.5px;color:var(--wh2);line-height:1.55;margin-bottom:14px;}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin-bottom:14px;}
+.kvk{font-family:'DM Mono',monospace;font-size:9px;color:var(--mu);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;padding-top:1px;}
+.kvv{font-family:'DM Mono',monospace;font-size:10px;color:var(--mo);word-break:break-all;}
+.cblk{background:var(--bg3);border:1px solid var(--bdr2);border-radius:6px;padding:13px;overflow-x:auto;}
+.cblk pre{font-family:'DM Mono',monospace;font-size:10px;color:var(--mo);line-height:1.7;white-space:pre;}
+
+.ng{cursor:pointer;}
+.ng .nbg{fill:var(--bg2);stroke:var(--bdr2);stroke-width:1;transition:stroke .18s,filter .18s;}
+.ng.act .nbg{stroke:var(--pu);filter:drop-shadow(0 0 5px var(--p-glo));}
+.ng.dim{opacity:.14;transition:opacity .18s;}
+.eg{cursor:pointer;}
+.eg .ep{fill:none;stroke:#2A3154;stroke-width:1.5;transition:stroke .18s,stroke-width .18s;}
+.eg.act .ep{stroke:var(--pu);stroke-width:2;}
+.eg.dim{opacity:.06;transition:opacity .18s;}
+.eg .ebc{fill:var(--bg2);stroke:var(--bdr2);stroke-width:1;transition:all .18s;}
+.eg .ebt{font-family:'DM Mono',monospace;font-size:7.5px;fill:var(--mu);dominant-baseline:central;text-anchor:middle;transition:fill .18s;}
+.eg.act .ebc{fill:var(--p-dim);stroke:var(--pu);}
+.eg.act .ebt{fill:var(--pu);}
+
+.tw-btn{position:fixed;bottom:14px;right:14px;background:var(--bg2);border:1px solid var(--bdr2);
+  border-radius:5px;padding:5px 11px;font-family:'DM Mono',monospace;font-size:9px;color:var(--mo);
+  cursor:pointer;letter-spacing:.07em;text-transform:uppercase;z-index:100;}
+.tw-pan{position:fixed;bottom:42px;right:14px;width:214px;background:var(--bg2);
+  border:1px solid var(--bdr2);border-radius:8px;padding:14px;z-index:100;display:none;}
+.tw-pan.open{display:block;}
+.tw-h{font-family:'Figtree',sans-serif;font-weight:600;font-size:11px;color:var(--wh);margin-bottom:11px;}
+.tw-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;}
+.tw-lab{font-family:'DM Sans',sans-serif;font-size:11px;color:var(--wh2);}
+.tog{width:30px;height:16px;background:var(--bg3);border:1px solid var(--bdr2);border-radius:8px;
+  position:relative;cursor:pointer;transition:background .18s;}
+.tog.on{background:var(--pu);}
+.tog::after{content:'';position:absolute;width:10px;height:10px;background:var(--wh2);
+  border-radius:50%;top:2px;left:2px;transition:transform .18s;}
+.tog.on::after{transform:translateX(14px);background:#fff;}
+.tw-sel{background:var(--bg3);border:1px solid var(--bdr2);color:var(--wh2);
+  font-family:'DM Mono',monospace;font-size:9px;padding:3px 6px;border-radius:4px;cursor:pointer;}
+
+.binbg{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:0;transition:opacity .5s;
+  overflow:hidden;font-family:'DM Mono',monospace;font-size:11px;
+  color:rgba(138,63,252,.055);word-break:break-all;line-height:1.45;padding:6px;white-space:pre-wrap;}
+.binbg.show{opacity:1;}
+
+@keyframes march{to{stroke-dashoffset:-20}}
+.eg.act.fl .ep{stroke-dasharray:6 4;animation:march .55s linear infinite;}
+</style>
+</head>
+<body>
+<div class="binbg" id="binBg"></div>
+
+<div class="topbar">
+  <span class="tb-cr">reference architecture</span>
+  <span class="tb-ti">Agentic Mesh &nbsp;·&nbsp; Istio ambient + kagent</span>
+  <button class="btn-sm" id="btnAll">Show all</button>
+</div>
+
+<div class="workspace">
+  <div class="canvas">
+    <div class="hdr">
+      <div class="ey">
+        <span class="ey-tag">agentic infrastructure</span>
+        <span class="ey-dot">·</span>
+        <span class="ey-tag">enterprise-grade ecosystem</span>
+        <span class="ey-dot">·</span>
+        <span class="ey-tag">Istio ambient · kagent</span>
+      </div>
+      <div class="hd-t">Agentic mesh control, identity, and governance layer</div>
+      <div class="hd-l">Each conceptual agentic mesh role maps to a concrete Istio ambient or kagent component: marketplace to kagent registry, identity authority to istiod, communication fabric to ztunnel, L7 policy and governance to waypoints. Hover a numbered edge or step row to trace a flow.</div>
+      <div class="legend">
+        <span class="lc">• cluster boundary (dashed purple)</span>
+        <span class="lc">• namespace boundary (dashed gray)</span>
+        <span class="lc">• numbered hop</span>
+        <span class="lc">• conceptual role · technical impl</span>
+      </div>
+    </div>
+    <div class="svg-wrap">
+      <svg id="diagram" viewBox="0 0 860 500" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L7,3z" fill="#2A3154"/>
+          </marker>
+          <marker id="arr-on" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L7,3z" fill="#8A3FFC"/>
+          </marker>
+        </defs>
+        <g id="gBounds"></g>
+        <g id="gEdges"></g>
+        <g id="gNodes"></g>
+      </svg>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="pan-lbl">steps</div>
+    <div class="slist" id="stepList"></div>
+    <div class="pan-lbl">detail</div>
+    <div class="sdet" id="stepDet">
+      <div class="det-ph"><span>hover a step</span><span>or numbered edge</span></div>
+    </div>
+  </div>
+</div>
+
+<button class="tw-btn" id="twBtn">tweaks</button>
+<div class="tw-pan" id="twPan">
+  <div class="tw-h">Display options</div>
+  <div class="tw-row"><span class="tw-lab">Animate flow</span><div class="tog" id="togFlow"></div></div>
+  <div class="tw-row"><span class="tw-lab">Binary pattern</span><div class="tog" id="togBin"></div></div>
+  <div class="tw-row">
+    <span class="tw-lab">Jump to step</span>
+    <select class="tw-sel" id="stepJump"><option value="">select</option></select>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────
+// DATA MODEL
+// ─────────────────────────────────────────────────────────────────
+
+// Layout key:
+//   Top zone  (y=22–80):  control-plane services outside any cluster
+//   Cluster A (y=110–380): istio-system ns (y=136–188) + agent ns (y=210–334) + ztunnel (y=344)
+//   Cluster B (y=394–500): federated agents
+//   Gap between istio-system bottom (188) and agent ns top (210) = 22px — used by SPIFFE edges
+//   Gap between agent bottom (268) and waypoint top (284) = 16px
+//   Gap between waypoint bottom (318) and ztunnel top (344) = 26px
+//   E7 (claims->ztunnel) routes down the left corridor (x=14) to avoid wp-finance
+
+const AM_BOUNDS = [
+  {type:'cluster', x:8,   y:110, w:844, h:270, label:'k8s cluster · cluster-a · Solo Enterprise'},
+  {type:'ns',      x:20,  y:136, w:820, h:52,  label:'istio-system'},
+  {type:'ns',      x:20,  y:210, w:400, h:124, label:'agents-finance'},
+  {type:'ns',      x:440, y:210, w:400, h:124, label:'agents-supply'},
+  {type:'cluster', x:8,   y:394, w:844, h:106, label:'k8s cluster · cluster-b · federated'},
+  {type:'ns',      x:275, y:404, w:470, h:58,  label:'agents-fed'},
+];
+
+const PAL = {
+  idp:   ['rgba(249,115,22,.10)', 'rgba(249,115,22,.35)', '#F97316'],
+  ctrl:  ['rgba(138,63,252,.14)', 'rgba(138,63,252,.40)', '#8A3FFC'],
+  reg:   ['rgba(20,184,166,.10)', 'rgba(20,184,166,.35)', '#14B8A6'],
+  obs:   ['rgba(236,72,153,.10)', 'rgba(236,72,153,.35)', '#EC4899'],
+  gw:    ['rgba(251,191,36,.10)', 'rgba(251,191,36,.35)', '#FBBF24'],
+  agent: ['rgba(52,211,153,.10)', 'rgba(52,211,153,.35)', '#34D399'],
+  fab:   ['rgba(129,140,248,.10)','rgba(129,140,248,.35)','#818CF8'],
+};
+
+const AM_NODES = {
+  // ── Top control plane (outside cluster boundaries) ──────────────
+  'entra':       {x:20,  y:22,  w:245, h:58, type:'idp',   icon:'I', label:'Microsoft Entra ID',    sub:'Owner principal · OIDC',         chips:['tenant: ent-corp','OAuth2']},
+  'registry':    {x:280, y:22,  w:245, h:58, type:'reg',   icon:'R', label:'kagent registry',        sub:'Marketplace · agent cards',      chips:['AgentCard CRD','A2A protocol']},
+  'otel':        {x:540, y:22,  w:245, h:58, type:'obs',   icon:'O', label:'otel collector',         sub:'Governance · audit sink',        chips:['OTLP','trace · metrics']},
+
+  // ── Cluster A — istio-system (y=136–188) ────────────────────────
+  'istiod':      {x:30,  y:144, w:260, h:38, type:'ctrl',  icon:'D', label:'istiod',                  sub:'Identity authority · CA',        chips:['SPIFFE root','xDS']},
+  'kagent-ctrl': {x:300, y:144, w:260, h:38, type:'ctrl',  icon:'K', label:'kagent controller',       sub:'Agent lifecycle · CRDs',         chips:['Agent CRD','v0.4.0']},
+  'ewgw-a':      {x:570, y:144, w:260, h:38, type:'gw',    icon:'E', label:'east-west gateway',       sub:'Cross-mesh egress',              chips:[':15443','TLS PASSTHROUGH']},
+
+  // ── Cluster A — agents-finance (y=210–334) ──────────────────────
+  //    agents at y=224 (bottom=268); waypoint at y=284 (bottom=318)
+  //    gap: agents-bottom→waypoint-top = 16px; badge E9 at (572,276)
+  'claims':      {x:30,  y:224, w:185, h:44, type:'agent', icon:'A', label:'claims-agent',            sub:'owner: finance-team',            chips:['sa/claims-agent']},
+  'payout':      {x:225, y:224, w:185, h:44, type:'agent', icon:'A', label:'payout-agent',            sub:'owner: finance-team',            chips:['sa/payout-agent']},
+  'wp-finance':  {x:30,  y:284, w:380, h:34, type:'gw',    icon:'W', label:'agents-finance waypoint', sub:'L7 policy · governance',         chips:['agentgateway','access policy']},
+
+  // ── Cluster A — agents-supply (y=210–334) ───────────────────────
+  'inventory':   {x:450, y:224, w:185, h:44, type:'agent', icon:'A', label:'inventory-agent',         sub:'owner: supply-ops',              chips:['sa/inventory-agent']},
+  'pricing':     {x:645, y:224, w:185, h:44, type:'agent', icon:'A', label:'pricing-agent',           sub:'owner: supply-ops',              chips:['sa/pricing-agent']},
+  'wp-supply':   {x:450, y:284, w:380, h:34, type:'gw',    icon:'W', label:'agents-supply waypoint',  sub:'L7 policy · governance',         chips:['agentgateway','access policy']},
+
+  // ── Cluster A — ztunnel DaemonSet (y=344–374) ───────────────────
+  //    gap: waypoint-bottom(318)→ztunnel-top(344) = 26px; badge E8 at (640,331)
+  'ztunnel-a':   {x:20,  y:344, w:820, h:30, type:'fab',   icon:'Z', label:'ztunnel · DaemonSet',     sub:'Communication fabric · L4 mTLS', chips:['HBONE','L4 authz · access log']},
+
+  // ── Cluster B — federated (y=394–500) ───────────────────────────
+  'ewgw-b':      {x:20,  y:412, w:240, h:44, type:'gw',    icon:'E', label:'east-west gateway',       sub:'Cross-mesh ingress',             chips:[':15443','PASSTHROUGH']},
+  'fed-agent':   {x:285, y:416, w:450, h:38, type:'agent', icon:'A', label:'logistics-agent',         sub:'owner: logistics · cluster-b',   chips:['cluster-b/sa/logistics-agent']},
+  'ztunnel-b':   {x:20,  y:466, w:820, h:22, type:'fab',   icon:'Z', label:'ztunnel · DaemonSet',     sub:'Communication fabric · L4 mTLS', chips:['HBONE']},
+};
+
+// br = badge radius (default 8; use smaller value for tight inter-node gaps)
+const AM_EDGES = [
+  // Step 1: registration
+  {id:1,  from:'claims',    to:'registry',   path:'M122,224 L122,94 L402,94 L402,80',              bx:262, by:94,  br:8,  label:'publish AgentCard'},
+  {id:2,  from:'inventory', to:'registry',   path:'M542,224 L542,94 L402,94 L402,80',              bx:472, by:94,  br:8,  label:'publish AgentCard'},
+  // Step 3: identity
+  {id:3,  from:'entra',     to:'istiod',     path:'M142,80 L142,128 L160,128 L160,144',            bx:151, by:128, br:7,  label:'OIDC owner binding'},
+  {id:4,  from:'istiod',    to:'claims',     path:'M160,182 L160,196 L122,196 L122,224',           bx:141, by:196, br:6,  label:'SPIFFE SVID'},
+  {id:5,  from:'istiod',    to:'payout',     path:'M160,182 L160,196 L317,196 L317,224',           bx:239, by:196, br:6,  label:'SPIFFE SVID'},
+  {id:6,  from:'istiod',    to:'inventory',  path:'M160,182 L160,196 L542,196 L542,224',           bx:351, by:196, br:6,  label:'SPIFFE SVID'},
+  // Step 4: cross-namespace authz
+  // E7: routes down the left corridor (x=14) to avoid wp-finance (x=30–410, y=284–318)
+  {id:7,  from:'claims',    to:'ztunnel-a',  path:'M30,246 L14,246 L14,344 L20,344',              bx:14,  by:295, br:7,  label:'L4 intercept'},
+  {id:8,  from:'ztunnel-a', to:'wp-supply',  path:'M640,344 L640,318',                             bx:672, by:331, br:7,  label:'HBONE to waypoint'},
+  {id:9,  from:'wp-supply', to:'inventory',  path:'M542,284 L542,268',                             bx:572, by:276, br:6,  label:'authz allow'},
+  // Step 5: governance trail — exit cluster A right side to avoid crossing nodes
+  {id:10, from:'ztunnel-a', to:'otel',       path:'M840,351 L856,351 L856,94 L662,94 L662,80',    bx:856, by:222, br:8,  label:'L4 access log'},
+  {id:11, from:'wp-supply', to:'otel',       path:'M830,301 L856,301 L856,94 L662,94 L662,80',    bx:856, by:184, br:8,  label:'L7 trace OTLP'},
+  // Step 6: cross-mesh federation
+  // E12: separate horizontal at y=203 (E4-E6 use y=196) to keep badges clear
+  {id:12, from:'claims',    to:'ewgw-a',     path:'M122,224 L122,203 L700,203 L700,182',           bx:411, by:203, br:6,  label:'cross-mesh egress'},
+  {id:13, from:'ewgw-a',    to:'ewgw-b',     path:'M830,163 L856,163 L856,387 L140,387 L140,412', bx:498, by:387, br:8,  label:'cross-cluster mTLS'},
+  {id:14, from:'ewgw-b',    to:'fed-agent',  path:'M260,434 L285,434',                             bx:272, by:434, br:7,  label:'delivery'},
+];
+
+const AM_STEPS = [
+  {id:1, title:'Agent registration',
+   summary:'kagent agents publish their AgentCard to the registry, exposing capability metadata, owner, and identity to the mesh.',
+   nodes:['claims','inventory','registry','kagent-ctrl'],
+   edges:[1,2],
+   facts:{
+     'CRD':              'Agent.kagent.dev/v1alpha1',
+     'Marketplace':      'kagent registry · A2A protocol',
+     'Owner label':      'agentic-mesh.solo.io/owner',
+     'Capability label': 'agentic-mesh.solo.io/capability',
+     'Visibility':       'cluster · cross-namespace',
+   },
+   code:`apiVersion: kagent.dev/v1alpha1
+kind: Agent
+metadata:
+  name: claims-agent
+  namespace: agents-finance
+  labels:
+    agentic-mesh.solo.io/owner: finance-team
+    agentic-mesh.solo.io/capability: claims-processing
+  annotations:
+    agentic-mesh.solo.io/version: "1.2.0"
+spec:
+  description: Process insurance claims and policy lookups
+  systemPrompt: |
+    You handle insurance claim intake and policy verification.
+  modelConfig:
+    provider: Anthropic
+    model: claude-3.5-sonnet`},
+
+  {id:2, title:'Capability discovery',
+   summary:'An agent or human operator queries the registry for agents matching a capability and retrieves an AgentCard with endpoint, owner, and auth metadata.',
+   nodes:['claims','registry'],
+   edges:[1],
+   facts:{
+     'Endpoint':        'GET /v1/agents?capability=inventory-lookup',
+     'Auth':            'mTLS · SPIFFE peer',
+     'Response':        'AgentCard JSON',
+     'Discovery scope': 'cluster · federated peers',
+     'Protocol':        'A2A · agent-to-agent',
+   },
+   code:`GET /v1/agents?capability=inventory-lookup
+Host: registry.kagent-system.svc
+Accept: application/json
+
+{
+  "agents": [
+    {
+      "name": "inventory-agent",
+      "namespace": "agents-supply",
+      "url": "https://inventory-agent.agents-supply.svc",
+      "owner": "supply-ops",
+      "capabilities": ["inventory-lookup", "stock-reservation"],
+      "authentication": { "schemes": ["mTLS"] },
+      "principal": "cluster.local/ns/agents-supply/sa/inventory-agent",
+      "version": "2.0.1"
+    }
+  ]
+}`},
+
+  {id:3, title:'Identity binding',
+   summary:'istiod issues a SPIFFE SVID to each agent service account; Entra ID supplies the owner JWT used by RequestAuthentication for human/team binding.',
+   nodes:['entra','istiod','claims','payout','inventory'],
+   edges:[3,4,5,6],
+   facts:{
+     'SPIFFE format': 'spiffe://cluster.local/ns/{ns}/sa/{sa}',
+     'Trust domain':  'cluster.local',
+     'Issuer':        'istiod root CA',
+     'Owner JWT':     'OIDC · Entra ID tenant',
+     'mTLS mode':     'STRICT',
+   },
+   code:`# Each ServiceAccount receives a SPIFFE SVID:
+# spiffe://cluster.local/ns/agents-finance/sa/claims-agent
+
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: agent-owner-binding
+  namespace: agents-finance
+spec:
+  jwtRules:
+  - issuer: "https://login.microsoftonline.com/{TENANT}/v2.0"
+    audiences: ["api://agentic-mesh"]`},
+
+  {id:4, title:'Cross-namespace authz',
+   summary:'A request from claims-agent to inventory-agent is intercepted by the local ztunnel, HBONE-tunneled to the destination waypoint, and admitted only after access policy evaluation.',
+   nodes:['claims','ztunnel-a','wp-supply','inventory'],
+   edges:[7,8,9],
+   facts:{
+     'Source':      'cluster.local/ns/agents-finance/sa/claims-agent',
+     'Destination': 'cluster.local/ns/agents-supply/sa/inventory-agent',
+     'L4 hop':      'ztunnel (per-node DaemonSet) · HBONE :15008',
+     'L7 hop':      'agents-supply waypoint (agentgateway)',
+     'Policy kind': 'access policy targetRef Gateway',
+   },
+   code:`apiVersion: security.istio.io/v1
+kind: AccessPolicy
+metadata:
+  name: claims-to-inventory
+  namespace: agents-supply
+spec:
+  targetRef:
+    kind: Gateway
+    group: gateway.networking.k8s.io
+    name: agents-supply-waypoint
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/agents-finance/sa/claims-agent"
+    to:
+    - operation:
+        methods: ["GET","POST"]
+        paths: ["/api/v1/inventory/*"]
+    when:
+    - key: request.auth.claims[groups]
+      values: ["finance-team"]`},
+
+  {id:5, title:'Governance trail',
+   summary:'ztunnel emits L4 access logs and waypoints emit L7 spans; both flow to the OTel collector with owner and capability tags for end-to-end audit.',
+   nodes:['ztunnel-a','wp-supply','otel'],
+   edges:[10,11],
+   facts:{
+     'L4 telemetry': 'ztunnel access log · OTLP',
+     'L7 telemetry': 'waypoint trace · OTLP',
+     'Custom tag':   'agent.owner from JWT header',
+     'Sample rate':  '100% (regulated workloads)',
+     'Sink':         'otel-collector · tempo · clickhouse',
+   },
+   code:`apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-audit
+  namespace: istio-system
+spec:
+  tracing:
+  - providers:
+    - name: otel-tracing
+    randomSamplingPercentage: 100.0
+    customTags:
+      agent.owner:
+        header:
+          name: x-agentic-mesh-owner
+      agent.capability:
+        header:
+          name: x-agentic-mesh-capability
+  accessLogging:
+  - providers:
+    - name: otel
+    filter:
+      expression: response.code >= 400 || request.headers["x-audit"] == "true"`},
+
+  {id:6, title:'Cross-mesh federation',
+   summary:'A cross-cluster call from claims-agent to logistics-agent exits via the east-west gateway in cluster-a, traverses an mTLS PASSTHROUGH hop, and is delivered through the peer gateway in cluster-b.',
+   nodes:['claims','ewgw-a','ewgw-b','fed-agent','ztunnel-b'],
+   edges:[12,13,14],
+   facts:{
+     'Source mesh':  'cluster.local (cluster-a)',
+     'Target mesh':  'cluster-b.local',
+     'Gateway':      'istio-eastwest · :15443',
+     'TLS mode':     'PASSTHROUGH (SNI routed)',
+     'Trust':        'common SPIFFE trust bundle',
+   },
+   code:`apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cross-network-gateway
+  namespace: istio-system
+spec:
+  gatewayClassName: istio-eastwest
+  listeners:
+  - name: tls
+    port: 15443
+    protocol: TLS
+    tls:
+      mode: PASSTHROUGH
+    allowedRoutes:
+      namespaces:
+        from: All
+---
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: logistics-agent-remote
+  namespace: agents-finance
+spec:
+  hosts: ["logistics-agent.agents-fed.cluster-b"]
+  location: MESH_EXTERNAL
+  resolution: DNS
+  endpoints:
+  - address: cross-network-gateway.istio-system.cluster-b
+    network: cluster-b`},
+];
+
+
+// ─────────────────────────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────────────────────────
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function txt(s, attrs, parent) {
+  const e = el('text', attrs, parent);
+  e.textContent = s;
+  return e;
+}
+
+function renderBounds() {
+  const g = document.getElementById('gBounds');
+  for (const b of AM_BOUNDS) {
+    if (b.type === 'cluster') {
+      el('rect', {x:b.x, y:b.y, width:b.w, height:b.h, rx:10,
+        fill:'none', stroke:'rgba(138,63,252,.28)', 'stroke-width':1.5, 'stroke-dasharray':'5 4'}, g);
+      const lw = b.label.length * 5.5 + 14;
+      el('rect', {x:b.x+10, y:b.y-7, width:lw, height:14, rx:4,
+        fill:'#0B0E18', stroke:'rgba(138,63,252,.4)', 'stroke-width':1}, g);
+      txt(b.label, {x:b.x+10+lw/2, y:b.y,
+        'text-anchor':'middle', 'dominant-baseline':'central',
+        'font-family':'DM Mono, monospace', 'font-size':8, fill:'#7B8DB0', 'letter-spacing':'0.05em'}, g);
+    } else {
+      el('rect', {x:b.x, y:b.y, width:b.w, height:b.h, rx:6,
+        fill:'none', stroke:'#2A3154', 'stroke-width':1, 'stroke-dasharray':'3 3', opacity:'.55'}, g);
+      txt(b.label, {x:b.x+7, y:b.y+9,
+        'font-family':'DM Mono, monospace', 'font-size':7, fill:'#4D5A7A', 'letter-spacing':'0.04em'}, g);
+    }
+  }
+}
+
+function renderEdges() {
+  const g = document.getElementById('gEdges');
+  for (const e of AM_EDGES) {
+    const r = e.br || 8;
+    const eg = el('g', {'class':'eg', 'data-eid':e.id}, g);
+    el('path', {d:e.path, 'class':'ep', stroke:'#2A3154', 'stroke-width':1.5, fill:'none', 'marker-end':'url(#arr)'}, eg);
+    el('circle', {cx:e.bx, cy:e.by, r, 'class':'ebc'}, eg);
+    txt(e.id, {x:e.bx, y:e.by, 'class':'ebt'}, eg);
+    eg.addEventListener('mouseenter', () => { if (!pinned) hlEdge(e.id); });
+    eg.addEventListener('mouseleave', () => { if (!pinned) clr(); });
+    eg.addEventListener('click', (ev) => { ev.stopPropagation(); pinEdge(e.id); });
+  }
+}
+
+function renderNodes() {
+  const g = document.getElementById('gNodes');
+  for (const [id, n] of Object.entries(AM_NODES)) {
+    const [ib, ibr, ic] = PAL[n.type];
+    const ng = el('g', {'class':'ng', 'data-nid':id, transform:`translate(${n.x},${n.y})`}, g);
+    el('rect', {width:n.w, height:n.h, rx:7, 'class':'nbg',
+      fill:'#151927', stroke:'#1E2438', 'stroke-width':1}, ng);
+
+    if (n.h <= 28) {
+      // ── Very slim (ztunnel bars) ──────────────────────────────────
+      const iw = 20, ih = n.h - 6;
+      el('rect', {x:5, y:3, width:iw, height:ih, rx:3, fill:ib, stroke:ibr, 'stroke-width':1}, ng);
+      txt(n.icon, {x:5+iw/2, y:n.h/2,
+        'text-anchor':'middle', 'dominant-baseline':'central',
+        'font-family':'DM Mono, monospace', 'font-size':8, fill:ic, 'font-weight':500}, ng);
+      txt(n.label, {x:32, y:n.h/2-3,
+        'font-family':'Figtree, sans-serif', 'font-size':9.5, 'font-weight':600,
+        fill:'#E8EAF2', 'dominant-baseline':'central'}, ng);
+      txt(n.sub, {x:32, y:n.h/2+6,
+        'font-family':'DM Sans, sans-serif', 'font-size':7.5, fill:'#6B7280', 'dominant-baseline':'central'}, ng);
+      // Chips flush right
+      let cx = n.w - 7;
+      for (const chip of n.chips.slice(0, 2).reverse()) {
+        const cw = chip.length * 5 + 10;
+        cx -= cw;
+        if (cx < 260) break;
+        el('rect', {x:cx, y:(n.h-9)/2, width:cw, height:9, rx:2, fill:'none', stroke:'#2A3154', 'stroke-width':1}, ng);
+        txt(chip, {x:cx+cw/2, y:n.h/2,
+          'text-anchor':'middle', 'dominant-baseline':'central',
+          'font-family':'DM Mono, monospace', 'font-size':6.5, fill:'#7B8DB0'}, ng);
+        cx -= 4;
+      }
+
+    } else if (n.h <= 40) {
+      // ── Compact (istio-system row, h=38; waypoints, h=34) ─────────
+      const iw = 24, ih = n.h - 10;
+      el('rect', {x:6, y:5, width:iw, height:ih, rx:3, fill:ib, stroke:ibr, 'stroke-width':1}, ng);
+      txt(n.icon, {x:6+iw/2, y:5+ih/2,
+        'text-anchor':'middle', 'dominant-baseline':'central',
+        'font-family':'DM Mono, monospace', 'font-size':9, fill:ic, 'font-weight':500}, ng);
+      txt(n.label, {x:36, y:13,
+        'font-family':'Figtree, sans-serif', 'font-size':10, 'font-weight':600, fill:'#E8EAF2'}, ng);
+      txt(n.sub, {x:36, y:25,
+        'font-family':'DM Sans, sans-serif', 'font-size':8, fill:'#6B7280'}, ng);
+      // Chips flush right, only if cx stays > 160 to avoid overlapping sub text
+      let cx = n.w - 6;
+      for (const chip of n.chips.slice(0, 2).reverse()) {
+        const cw = chip.length * 5 + 10;
+        cx -= cw;
+        if (cx < 160) break;
+        el('rect', {x:cx, y:n.h-15, width:cw, height:10, rx:2.5, fill:'none', stroke:'#2A3154', 'stroke-width':1}, ng);
+        txt(chip, {x:cx+cw/2, y:n.h-10,
+          'text-anchor':'middle', 'dominant-baseline':'central',
+          'font-family':'DM Mono, monospace', 'font-size':7, fill:'#7B8DB0'}, ng);
+        cx -= 5;
+      }
+
+    } else {
+      // ── Full-size (agents h=44, top nodes h=58, ewgw-b h=44) ─────
+      const iw = 28, ih = n.h - 12;
+      el('rect', {x:7, y:6, width:iw, height:ih, rx:4, fill:ib, stroke:ibr, 'stroke-width':1}, ng);
+      txt(n.icon, {x:7+iw/2, y:6+ih/2,
+        'text-anchor':'middle', 'dominant-baseline':'central',
+        'font-family':'DM Mono, monospace', 'font-size':10, fill:ic, 'font-weight':500}, ng);
+      const tx = 43;
+      txt(n.label, {x:tx, y:14,
+        'font-family':'Figtree, sans-serif', 'font-size':10, 'font-weight':600, fill:'#E8EAF2'}, ng);
+      txt(n.sub, {x:tx, y:26,
+        'font-family':'DM Sans, sans-serif', 'font-size':8, fill:'#6B7280'}, ng);
+      // Single chip below sub text, only if it fits in the width
+      const chip = n.chips[0];
+      if (chip) {
+        const cw = chip.length * 5 + 10;
+        if (tx + cw <= n.w - 6) {
+          el('rect', {x:tx, y:n.h-14, width:cw, height:10, rx:2.5,
+            fill:'none', stroke:'#2A3154', 'stroke-width':1}, ng);
+          txt(chip, {x:tx+cw/2, y:n.h-9,
+            'text-anchor':'middle', 'dominant-baseline':'central',
+            'font-family':'DM Mono, monospace', 'font-size':7, fill:'#7B8DB0'}, ng);
+        }
+      }
+    }
+
+    ng.addEventListener('mouseenter', () => { if (!pinned) prevNode(id); });
+    ng.addEventListener('mouseleave', () => { if (!pinned) clr(); });
+    ng.addEventListener('click', (ev) => { ev.stopPropagation(); pinNode(id); });
+  }
+}
+
+function renderStepList() {
+  const list = document.getElementById('stepList');
+  const jump = document.getElementById('stepJump');
+  for (const s of AM_STEPS) {
+    const row = document.createElement('div');
+    row.className = 'srow'; row.dataset.sid = s.id;
+    row.innerHTML = `<div class="sbadge">${s.id}</div><div><div class="sti">${s.title}</div><div class="ssu">${s.summary}</div></div>`;
+    row.addEventListener('mouseenter', () => { if (!pinned) hlStep(s); });
+    row.addEventListener('mouseleave', () => { if (!pinned) clr(); });
+    row.addEventListener('click', () => pinStep(s));
+    list.appendChild(row);
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = `${s.id}. ${s.title}`;
+    jump.appendChild(opt);
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// INTERACTION
+// ─────────────────────────────────────────────────────────────────
+
+let pinned = false, flowOn = false;
+const AN = () => document.querySelectorAll('.ng');
+const AE = () => document.querySelectorAll('.eg');
+
+function hlStep(s) {
+  AN().forEach(e => { e.classList.remove('act'); e.classList.add('dim'); });
+  AE().forEach(e => {
+    e.classList.remove('act', 'fl'); e.classList.add('dim');
+    const p = e.querySelector('.ep'); if (p) p.setAttribute('marker-end', 'url(#arr)');
+  });
+  for (const nid of s.nodes) {
+    const e = document.querySelector(`.ng[data-nid="${nid}"]`);
+    if (e) { e.classList.remove('dim'); e.classList.add('act'); }
+  }
+  for (const eid of s.edges) {
+    const e = document.querySelector(`.eg[data-eid="${eid}"]`);
+    if (e) {
+      e.classList.remove('dim'); e.classList.add('act');
+      if (flowOn) e.classList.add('fl');
+      const p = e.querySelector('.ep'); if (p) p.setAttribute('marker-end', 'url(#arr-on)');
+    }
+  }
+  document.querySelectorAll('.srow').forEach(r => r.classList.remove('act'));
+  const row = document.querySelector(`.srow[data-sid="${s.id}"]`);
+  if (row) row.classList.add('act');
+  showDet(s);
+}
+
+function hlEdge(eid) {
+  const s = AM_STEPS.find(st => st.edges.includes(eid));
+  if (s) hlStep(s);
+}
+function prevNode(nid) {
+  const s = AM_STEPS.find(st => st.nodes.includes(nid));
+  if (s) hlStep(s);
+}
+
+function clr() {
+  AN().forEach(e => e.classList.remove('act', 'dim'));
+  AE().forEach(e => {
+    e.classList.remove('act', 'dim', 'fl');
+    const p = e.querySelector('.ep'); if (p) p.setAttribute('marker-end', 'url(#arr)');
+  });
+  document.querySelectorAll('.srow').forEach(r => r.classList.remove('act'));
+  document.getElementById('stepDet').innerHTML =
+    '<div class="det-ph"><span>hover a step</span><span>or numbered edge</span></div>';
+  pinned = false;
+}
+
+function pinStep(s) { pinned = true; hlStep(s); }
+function pinEdge(eid) { const s = AM_STEPS.find(st => st.edges.includes(eid)); if (s) pinStep(s); }
+function pinNode(nid) { const s = AM_STEPS.find(st => st.nodes.includes(nid)); if (s) pinStep(s); }
+
+function showDet(s) {
+  const fh = Object.entries(s.facts)
+    .map(([k, v]) => `<div class="kvk">${k}</div><div class="kvv">${v}</div>`)
+    .join('');
+  document.getElementById('stepDet').innerHTML =
+    `<div class="det-ti">${s.title}</div><div class="det-le">${s.summary}</div>
+     <div class="kv">${fh}</div>
+     <div class="cblk"><pre>${esc(s.code)}</pre></div>`;
+}
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+document.getElementById('btnAll').addEventListener('click', clr);
+document.getElementById('diagram').addEventListener('click', () => { if (pinned) clr(); });
+
+
+// ─────────────────────────────────────────────────────────────────
+// TWEAKS
+// ─────────────────────────────────────────────────────────────────
+
+document.getElementById('twBtn').addEventListener('click', () =>
+  document.getElementById('twPan').classList.toggle('open'));
+
+document.getElementById('togFlow').addEventListener('click', function () {
+  flowOn = !flowOn; this.classList.toggle('on', flowOn);
+  document.querySelectorAll('.eg.act').forEach(e => e.classList.toggle('fl', flowOn));
+});
+
+document.getElementById('togBin').addEventListener('click', function () {
+  const bb = document.getElementById('binBg'); this.classList.toggle('on');
+  if (this.classList.contains('on')) {
+    if (!bb.textContent) {
+      let s = ''; for (let i = 0; i < 4200; i++) s += Math.random() > .5 ? '1' : '0';
+      bb.textContent = s;
+    }
+    bb.classList.add('show');
+  } else { bb.classList.remove('show'); }
+});
+
+document.getElementById('stepJump').addEventListener('change', function () {
+  const id = parseInt(this.value), s = AM_STEPS.find(st => st.id === id);
+  if (s) { pinned = false; pinStep(s); } this.value = '';
+});
+
+
+// ─────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────
+renderBounds();
+renderEdges();
+renderNodes();
+renderStepList();
+</script>
+</body>
+</html>
