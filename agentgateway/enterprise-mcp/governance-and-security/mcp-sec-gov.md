@@ -224,9 +224,9 @@ Open MCP Inspector
 npx modelcontextprotocol/inspector#0.18.0
 ```
 
-### Agent
+## Agent Config
 
-## Traffic Through Agentgateway From Kagent
+### Traffic Through Agentgateway From Kagent
 
 ```
 kubectl apply -f - <<EOF
