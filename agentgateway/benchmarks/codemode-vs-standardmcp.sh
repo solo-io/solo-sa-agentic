@@ -1,58 +1,3 @@
-# Code Mode Token Cost Test
-
-This test compares the tool-context overhead of the two currently deployed MCP
-gateways:
-
-| Gateway | MCP endpoint | Tool source |
-| --- | --- | --- |
-| `codemode-gateway` | `/mcp/geocoding` | Code Mode facade for the Open-Meteo Geocoding API |
-| `mcp-gateway` | `/mcp` | Standard GitHub Copilot MCP server |
-
-The test does not require an Agent. It retrieves each MCP `tools/list` response,
-converts the tools to the format accepted by the existing Anthropic route, and
-sends the same prompt and tool inventory to Claude Sonnet 4.6. The response's
-`usage.prompt_tokens` value is the primary measurement.
-
-MCP Inspector can display the tool definitions, but it does not invoke an LLM
-and therefore cannot report model token usage.
-
-> This measures the two deployed configurations as they exist. The upstreams
-> and tool inventories differ, so it is not a controlled test where MCP tool
-> mode is the only variable.
-
-## Prerequisites
-
-- The active Kubernetes context points to the cluster containing both Gateways.
-- `kubectl` can access the `agentgateway-system` namespace.
-- Node.js 18 or newer is installed.
-- The `anthropic` backend and `anthropic-secret` are configured.
-- A GitHub PAT with access to the GitHub Copilot MCP server is available.
-
-## 1. Update GitHub Authentication
-
-Enter the PAT interactively so it is not written to this file or shell history.
-The upstream expects the complete `Authorization` header in the Secret.
-
-```bash
-read -rsp "GitHub PAT: " GITHUB_PAT
-printf '\n'
-
-kubectl create secret generic github-pat \
-  --namespace agentgateway-system \
-  --from-literal=Authorization="Bearer ${GITHUB_PAT}" \
-  --dry-run=client \
-  -o yaml | kubectl apply -f -
-
-unset GITHUB_PAT
-```
-
-## 2. Run The Comparison
-
-The script discovers the current Gateway addresses, initializes separate MCP
-sessions, fetches both tool inventories, and makes two otherwise identical LLM
-requests. It does not call any MCP tools.
-
-```bash
 RESULTS="$(
 node --input-type=module <<'NODE'
 import { execFileSync } from "node:child_process";
@@ -264,4 +209,3 @@ NODE
 )"
 
 printf '%s\n' "$RESULTS"
-```
