@@ -82,8 +82,8 @@ metadata:
   namespace: agentgateway-system
 spec:
   targetRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: github-mcp-server
   backend:
     mcp:
@@ -106,8 +106,8 @@ metadata:
   namespace: agentgateway-system
 spec:
   targetRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: github-mcp-server
   backend:
     mcp:
@@ -129,8 +129,8 @@ metadata:
   namespace: agentgateway-system
 spec:
   targetRefs:
-    - group: agentgateway.dev
-      kind: AgentgatewayBackend
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
       name: github-mcp-server
   backend:
     mcp:
@@ -143,10 +143,11 @@ EOF
 
 ## Elicitation
 
-1. Clear previous ephemeral tokens:
+1. Clear previous ephemeral tokens by deleting the elicitation if it already exists:
 ```
-kubectl rollout status deployment/enterprise-agentgateway \
-  -n agentgateway-system --timeout=60s
+1. Go to Elicitations tab
+2. Click the three dots next to the elicitation
+3. Delete it
 ```
 
 2. Open the elicitation view:
@@ -169,8 +170,3 @@ https://34.74.210.205/ke/
 This requires the elicitation policy to be active and the static github-pat authentication removed. The controller restart makes the demo repeatable because your current token storage is ephemeral.
 
 8. Restart the Gateway so you can reate a new pending elicitation if you want to show the process again
-
-```
-kubectl rollout restart deployment/enterprise-agentgateway \
-  -n agentgateway-system
-```
