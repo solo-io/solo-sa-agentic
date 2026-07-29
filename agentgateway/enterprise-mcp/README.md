@@ -1169,6 +1169,32 @@ X-Agent-Name=obo-demo-agent      → 43 tools
 X-Agent-Name=(none)              →  0 tools
 ```
 
+Clean up the policy:
+```yaml
+kubectl delete -f - <<EOF
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: github-mcp-rbac
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+    - group: enterpriseagentgateway.solo.io
+      kind: EnterpriseAgentgatewayBackend
+      name: github-mcp-server
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+            # Read-only persona — search/get/list + dedicated *_read tools
+            - 'request.headers["x-agent-name"] == "obo-readonly-agent" && (mcp.tool.name.startsWith("search_") || mcp.tool.name.startsWith("get_") || mcp.tool.name.startsWith("list_") || mcp.tool.name in ["issue_read", "pull_request_read"])'
+            # Full persona — everything EXCEPT destructive/admin tools
+            - 'request.headers["x-agent-name"] == "obo-demo-agent" && !(mcp.tool.name in ["merge_pull_request", "delete_file", "run_secret_scanning"])'
+EOF
+```
+
 ## 13. Attribute-Based Access Control (ABAC)
 
 ## 13a. ABAC With CEL
