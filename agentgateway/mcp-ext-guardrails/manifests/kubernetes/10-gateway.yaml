@@ -1,0 +1,17 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-ext-guardrails-gateway
+  namespace: agentgateway-system
+  labels:
+    app.kubernetes.io/name: mcp-ext-guardrails-gateway
+    example.io/system: mcp-ext-guardrails
+spec:
+  gatewayClassName: enterprise-agentgateway
+  listeners:
+  - name: mcp-http
+    protocol: HTTP
+    port: 3000
+    allowedRoutes:
+      namespaces:
+        from: Same

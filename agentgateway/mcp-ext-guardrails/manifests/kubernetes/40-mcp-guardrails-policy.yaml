@@ -1,0 +1,47 @@
+# The mcpGuardrails policy: call the ExtMCP server on tools/call (deny) and
+# tools/list (mutate). FailClosed => if the policy server is down, MCP is blocked.
+# Uses EnterpriseAgentgatewayPolicy to match this repo's enterprise-mcp demo
+# convention. (The base agentgateway.dev/AgentgatewayPolicy exposes the identical
+# backend.mcp.guardrails field and works too.)
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: mcp-guardrails
+  namespace: agentgateway-system
+  labels:
+    example.io/system: mcp-ext-guardrails
+spec:
+  targetRefs:
+  - group: agentgateway.dev
+    kind: AgentgatewayBackend
+    name: demo-mcp
+  backend:
+    mcp:
+      guardrails:
+        processors:
+        - remote:
+            backendRef:
+              name: ext-mcp
+              port: 9001
+            failureMode: FailClosed
+          methods:
+            tools/call: Request
+            tools/list: Response
+---
+# Bound the gRPC callout so a slow/cold policy server engages FailClosed instead
+# of hanging the MCP request.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayPolicy
+metadata:
+  name: ext-mcp-timeout
+  namespace: agentgateway-system
+  labels:
+    example.io/system: mcp-ext-guardrails
+spec:
+  targetRefs:
+  - group: ""
+    kind: Service
+    name: ext-mcp
+  backend:
+    http:
+      requestTimeout: 5s
